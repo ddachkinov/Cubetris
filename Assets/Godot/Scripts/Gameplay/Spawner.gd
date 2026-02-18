@@ -2,6 +2,7 @@ extends Node3D
 
 ## Spawner — attached to the spawn-area Node3D.
 ## Handles cube creation, left/right track movement, and launching.
+## Supports both keyboard (desktop) and touch/swipe (mobile) input.
 
 # ---------------------------------------------------------------------------
 # Exports (editable in the Godot Inspector)
@@ -39,8 +40,14 @@ var _spawn_timer: float = 0.0
 func _ready() -> void:
 	# Register with GameManager so it can call stop/start
 	GameManager.spawner = self
-	current_track = track_count / 2
+	current_track   = track_count / 2
 	next_cube_color = _random_color_index()
+
+	# Connect touch signals (safe on desktop — TouchInputManager still loads,
+	# signals just never fire when there's no touchscreen)
+	TouchInputManager.swiped_left.connect(_on_swipe_left)
+	TouchInputManager.swiped_right.connect(_on_swipe_right)
+	TouchInputManager.tapped.connect(_on_tap)
 
 
 func _process(delta: float) -> void:
@@ -58,15 +65,24 @@ func _process(delta: float) -> void:
 
 
 # ---------------------------------------------------------------------------
-# Input
+# Input — keyboard (desktop) + touch signals (mobile)
 # ---------------------------------------------------------------------------
 func _handle_input() -> void:
+	# Keyboard / gamepad
 	if Input.is_action_just_pressed("move_left"):
 		_move_track(-1)
 	elif Input.is_action_just_pressed("move_right"):
 		_move_track(1)
 
 	if Input.is_action_just_pressed("launch") and current_cube != null:
+		_launch_cube()
+
+
+# Touch signal callbacks -------------------------------------------------------
+func _on_swipe_left()  -> void: _move_track(-1)
+func _on_swipe_right() -> void: _move_track(1)
+func _on_tap()         -> void:
+	if current_cube != null:
 		_launch_cube()
 
 

@@ -20,12 +20,16 @@ LevelManager="*res://Assets/Godot/Scripts/Managers/LevelManager.gd"
 MatchDetector="*res://Assets/Godot/Scripts/Systems/MatchDetector.gd"
 ObjectPool="*res://Assets/Godot/Scripts/Systems/ObjectPool.gd"
 ExplosionEffect="*res://Assets/Godot/Scripts/Systems/ExplosionEffect.gd"
+TouchInputManager="*res://Assets/Godot/Scripts/Systems/TouchInputManager.gd"
+MobilePerformanceManager="*res://Assets/Godot/Scripts/Systems/MobilePerformanceManager.gd"
 
 [display]
 
 window/size/viewport_width=1920
 window/size/viewport_height=1080
 window/stretch/mode="canvas_items"
+; Landscape on handheld devices (0=auto, 1=portrait, 2=landscape, 3=reverse_portrait, 4=reverse_landscape)
+window/handheld/orientation=2
 
 [input]
 
@@ -56,6 +60,11 @@ restart={
 "events": [Object(InputEventKey,"resource_local_to_scene":false,"resource_name":"","device":-1,"window_id":0,"alt_pressed":false,"shift_pressed":false,"ctrl_pressed":false,"meta_pressed":false,"pressed":false,"keycode":82,"physical_keycode":0,"key_label":0,"unicode":114,"echo":false,"script":null)
 ]
 }
+
+[input_devices]
+
+; Lets mouse clicks fire InputEventScreenTouch so touch code works on desktop/simulator
+pointing/emulate_touch_from_mouse=true
 
 [physics]
 
