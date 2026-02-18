@@ -1,0 +1,22 @@
+[
+  { "level":1,  "trackCount":6,  "wallSpeedStart":0.02,  "wallSpeedRamp":0.0,    "targetPoints":100,  "targetTime":0, "obstacleProbability":0.00, "specialCubeChance":0.00, "spawnRate":2.5 },
+  { "level":2,  "trackCount":6,  "wallSpeedStart":0.025, "wallSpeedRamp":0.0001, "targetPoints":200,  "targetTime":0, "obstacleProbability":0.00, "specialCubeChance":0.00, "spawnRate":2.3 },
+  { "level":3,  "trackCount":8,  "wallSpeedStart":0.03,  "wallSpeedRamp":0.0002, "targetPoints":350,  "targetTime":0, "obstacleProbability":0.01, "specialCubeChance":0.00, "spawnRate":2.2 },
+  { "level":4,  "trackCount":8,  "wallSpeedStart":0.035, "wallSpeedRamp":0.0003, "targetPoints":500,  "targetTime":0, "obstacleProbability":0.02, "specialCubeChance":0.01, "spawnRate":2.0 },
+  { "level":5,  "trackCount":8,  "wallSpeedStart":0.04,  "wallSpeedRamp":0.0005, "targetPoints":700,  "targetTime":0, "obstacleProbability":0.03, "specialCubeChance":0.01, "spawnRate":1.9 },
+  { "level":6,  "trackCount":10, "wallSpeedStart":0.045, "wallSpeedRamp":0.0006, "targetPoints":900,  "targetTime":0, "obstacleProbability":0.04, "specialCubeChance":0.02, "spawnRate":1.8 },
+  { "level":7,  "trackCount":10, "wallSpeedStart":0.05,  "wallSpeedRamp":0.0008, "targetPoints":1100, "targetTime":0, "obstacleProbability":0.05, "specialCubeChance":0.02, "spawnRate":1.7 },
+  { "level":8,  "trackCount":10, "wallSpeedStart":0.055, "wallSpeedRamp":0.001,  "targetPoints":1400, "targetTime":0, "obstacleProbability":0.06, "specialCubeChance":0.03, "spawnRate":1.6 },
+  { "level":9,  "trackCount":10, "wallSpeedStart":0.06,  "wallSpeedRamp":0.0012, "targetPoints":1700, "targetTime":0, "obstacleProbability":0.07, "specialCubeChance":0.03, "spawnRate":1.5 },
+  { "level":10, "trackCount":12, "wallSpeedStart":0.065, "wallSpeedRamp":0.0015, "targetPoints":2000, "targetTime":0, "obstacleProbability":0.08, "specialCubeChance":0.04, "spawnRate":1.5 },
+  { "level":11, "trackCount":12, "wallSpeedStart":0.07,  "wallSpeedRamp":0.0018, "targetPoints":2400, "targetTime":0, "obstacleProbability":0.09, "specialCubeChance":0.04, "spawnRate":1.4 },
+  { "level":12, "trackCount":12, "wallSpeedStart":0.075, "wallSpeedRamp":0.002,  "targetPoints":2800, "targetTime":0, "obstacleProbability":0.10, "specialCubeChance":0.05, "spawnRate":1.3 },
+  { "level":13, "trackCount":12, "wallSpeedStart":0.08,  "wallSpeedRamp":0.0022, "targetPoints":3200, "targetTime":0, "obstacleProbability":0.11, "specialCubeChance":0.05, "spawnRate":1.3 },
+  { "level":14, "trackCount":14, "wallSpeedStart":0.085, "wallSpeedRamp":0.0025, "targetPoints":3700, "targetTime":0, "obstacleProbability":0.12, "specialCubeChance":0.06, "spawnRate":1.2 },
+  { "level":15, "trackCount":14, "wallSpeedStart":0.09,  "wallSpeedRamp":0.003,  "targetPoints":4200, "targetTime":0, "obstacleProbability":0.13, "specialCubeChance":0.06, "spawnRate":1.2 },
+  { "level":16, "trackCount":14, "wallSpeedStart":0.095, "wallSpeedRamp":0.0035, "targetPoints":4800, "targetTime":0, "obstacleProbability":0.14, "specialCubeChance":0.07, "spawnRate":1.1 },
+  { "level":17, "trackCount":14, "wallSpeedStart":0.1,   "wallSpeedRamp":0.004,  "targetPoints":5500, "targetTime":0, "obstacleProbability":0.15, "specialCubeChance":0.07, "spawnRate":1.1 },
+  { "level":18, "trackCount":16, "wallSpeedStart":0.11,  "wallSpeedRamp":0.0045, "targetPoints":6300, "targetTime":0, "obstacleProbability":0.16, "specialCubeChance":0.08, "spawnRate":1.0 },
+  { "level":19, "trackCount":16, "wallSpeedStart":0.12,  "wallSpeedRamp":0.005,  "targetPoints":7200, "targetTime":0, "obstacleProbability":0.17, "specialCubeChance":0.08, "spawnRate":1.0 },
+  { "level":20, "trackCount":16, "wallSpeedStart":0.13,  "wallSpeedRamp":0.006,  "targetPoints":8000, "targetTime":0, "obstacleProbability":0.18, "specialCubeChance":0.10, "spawnRate":0.9 }
+]

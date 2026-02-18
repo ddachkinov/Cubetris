@@ -1,0 +1,67 @@
+; Engine configuration file.
+; Godot 4.x project configuration for Cubetris
+
+config_version=5
+
+[application]
+
+config/name="Cubetris"
+config/description="Physics-based Cube Tetris with Explosive Effects"
+config/version="1.0.0"
+run/main_scene="res://Assets/Godot/Scenes/MainGame.tscn"
+config/features=PackedStringArray("4.2", "Forward Plus")
+config/icon="res://Assets/Godot/icon.svg"
+
+[autoload]
+
+; Singletons - loaded in order
+GameManager="*res://Assets/Godot/Scripts/Managers/GameManager.gd"
+LevelManager="*res://Assets/Godot/Scripts/Managers/LevelManager.gd"
+MatchDetector="*res://Assets/Godot/Scripts/Systems/MatchDetector.gd"
+ObjectPool="*res://Assets/Godot/Scripts/Systems/ObjectPool.gd"
+ExplosionEffect="*res://Assets/Godot/Scripts/Systems/ExplosionEffect.gd"
+
+[display]
+
+window/size/viewport_width=1920
+window/size/viewport_height=1080
+window/stretch/mode="canvas_items"
+
+[input]
+
+move_left={
+"deadzone": 0.2,
+"events": [Object(InputEventKey,"resource_local_to_scene":false,"resource_name":"","device":-1,"window_id":0,"alt_pressed":false,"shift_pressed":false,"ctrl_pressed":false,"meta_pressed":false,"pressed":false,"keycode":65,"physical_keycode":0,"key_label":0,"unicode":97,"echo":false,"script":null)
+, Object(InputEventKey,"resource_local_to_scene":false,"resource_name":"","device":-1,"window_id":0,"alt_pressed":false,"shift_pressed":false,"ctrl_pressed":false,"meta_pressed":false,"pressed":false,"keycode":4194319,"physical_keycode":0,"key_label":0,"unicode":0,"echo":false,"script":null)
+]
+}
+move_right={
+"deadzone": 0.2,
+"events": [Object(InputEventKey,"resource_local_to_scene":false,"resource_name":"","device":-1,"window_id":0,"alt_pressed":false,"shift_pressed":false,"ctrl_pressed":false,"meta_pressed":false,"pressed":false,"keycode":68,"physical_keycode":0,"key_label":0,"unicode":100,"echo":false,"script":null)
+, Object(InputEventKey,"resource_local_to_scene":false,"resource_name":"","device":-1,"window_id":0,"alt_pressed":false,"shift_pressed":false,"ctrl_pressed":false,"meta_pressed":false,"pressed":false,"keycode":4194321,"physical_keycode":0,"key_label":0,"unicode":0,"echo":false,"script":null)
+]
+}
+launch={
+"deadzone": 0.2,
+"events": [Object(InputEventKey,"resource_local_to_scene":false,"resource_name":"","device":-1,"window_id":0,"alt_pressed":false,"shift_pressed":false,"ctrl_pressed":false,"meta_pressed":false,"pressed":false,"keycode":32,"physical_keycode":0,"key_label":0,"unicode":32,"echo":false,"script":null)
+]
+}
+pause={
+"deadzone": 0.2,
+"events": [Object(InputEventKey,"resource_local_to_scene":false,"resource_name":"","device":-1,"window_id":0,"alt_pressed":false,"shift_pressed":false,"ctrl_pressed":false,"meta_pressed":false,"pressed":false,"keycode":4194305,"physical_keycode":0,"key_label":0,"unicode":0,"echo":false,"script":null)
+]
+}
+restart={
+"deadzone": 0.2,
+"events": [Object(InputEventKey,"resource_local_to_scene":false,"resource_name":"","device":-1,"window_id":0,"alt_pressed":false,"shift_pressed":false,"ctrl_pressed":false,"meta_pressed":false,"pressed":false,"keycode":82,"physical_keycode":0,"key_label":0,"unicode":114,"echo":false,"script":null)
+]
+}
+
+[physics]
+
+3d/default_gravity=20.0
+
+[rendering]
+
+renderer/rendering_method="forward_plus"
+environment/defaults/default_clear_color=Color(0.1, 0.1, 0.15, 1)
