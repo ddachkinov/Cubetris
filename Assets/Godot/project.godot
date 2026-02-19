@@ -8,20 +8,20 @@ config_version=5
 config/name="Cubetris"
 config/description="Physics-based Cube Tetris with Explosive Effects"
 config/version="1.0.0"
-run/main_scene="res://Assets/Godot/Scenes/MainGame.tscn"
+run/main_scene="res://Scenes/MainGame.tscn"
 config/features=PackedStringArray("4.6", "Forward Plus")
-config/icon="res://Assets/Godot/icon.svg"
+config/icon="res://icon.svg"
 
 [autoload]
 
 ; Singletons - loaded in order
-GameManager="*res://Assets/Godot/Scripts/Managers/GameManager.gd"
-LevelManager="*res://Assets/Godot/Scripts/Managers/LevelManager.gd"
-MatchDetector="*res://Assets/Godot/Scripts/Systems/MatchDetector.gd"
-ObjectPool="*res://Assets/Godot/Scripts/Systems/ObjectPool.gd"
-ExplosionEffect="*res://Assets/Godot/Scripts/Systems/ExplosionEffect.gd"
-TouchInputManager="*res://Assets/Godot/Scripts/Systems/TouchInputManager.gd"
-MobilePerformanceManager="*res://Assets/Godot/Scripts/Systems/MobilePerformanceManager.gd"
+GameManager="*res://Scripts/Managers/GameManager.gd"
+LevelManager="*res://Scripts/Managers/LevelManager.gd"
+MatchDetector="*res://Scripts/Systems/MatchDetector.gd"
+ObjectPool="*res://Scripts/Systems/ObjectPool.gd"
+ExplosionEffect="*res://Scripts/Systems/ExplosionEffect.gd"
+TouchInputManager="*res://Scripts/Systems/TouchInputManager.gd"
+MobilePerformanceManager="*res://Scripts/Systems/MobilePerformanceManager.gd"
 
 [display]
 

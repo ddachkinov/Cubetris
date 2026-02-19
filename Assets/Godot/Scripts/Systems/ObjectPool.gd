@@ -33,11 +33,11 @@ func _ready() -> void:
 	# Autoloads cannot have @export PackedScene vars set via the editor,
 	# so fall back to loading from known prefab paths when not assigned.
 	if cube_scene == null:
-		cube_scene = load("res://Assets/Godot/Scenes/Prefabs/CubePrefab.tscn")
+		cube_scene = load("res://Scenes/Prefabs/CubePrefab.tscn")
 		if cube_scene == null:
 			push_error("ObjectPool: CubePrefab.tscn not found!")
 	if voxel_scene == null:
-		voxel_scene = load("res://Assets/Godot/Scenes/Prefabs/VoxelPrefab.tscn")
+		voxel_scene = load("res://Scenes/Prefabs/VoxelPrefab.tscn")
 		if voxel_scene == null:
 			push_error("ObjectPool: VoxelPrefab.tscn not found!")
 
@@ -79,7 +79,6 @@ func get_voxel() -> Node3D:
 
 func return_voxel(voxel: Node3D) -> void:
 	_return_to_pool(voxel, _voxel_pool, _active_voxels, _voxel_container)
-	var ctrl := voxel.get_script()
 	if voxel.has_method("reset_voxel"):
 		voxel.reset_voxel()
 

@@ -1,6 +1,6 @@
 [gd_scene load_steps=4 format=3]
 
-[ext_resource type="Script" path="res://Assets/Godot/Scripts/Gameplay/CubeController.gd" id="1_cube"]
+[ext_resource type="Script" path="res://Scripts/Gameplay/CubeController.gd" id="1_cube"]
 
 [sub_resource type="BoxMesh" id="BoxMesh_cube"]
 size = Vector3(1, 1, 1)

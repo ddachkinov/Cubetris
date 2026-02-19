@@ -63,7 +63,7 @@ func clear_all_explosions() -> void:
 # Internal
 # ---------------------------------------------------------------------------
 func _spawn_voxel(center: Vector3, color: Color) -> void:
-	var voxel := ObjectPool.get_voxel()
+	var voxel: Node3D = ObjectPool.get_voxel()
 	if voxel == null:
 		return
 

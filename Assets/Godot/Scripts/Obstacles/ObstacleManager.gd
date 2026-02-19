@@ -81,13 +81,13 @@ func _spawn_obstacle() -> void:
 	if obstacle_scene == null:
 		return
 
-	var level_data  := LevelManager.get_current_level()
-	var track_count := level_data.get("trackCount", 10)
-	var track_idx   := randi() % track_count
+	var level_data: Dictionary = LevelManager.get_current_level()
+	var track_count: int = level_data.get("trackCount", 10)
+	var track_idx: int   = randi() % track_count
 
-	var spacing  := 1.0
-	var x_offset := (track_count - 1) * spacing * 0.5
-	var x_pos    := track_idx * spacing - x_offset
+	var spacing: float  = 1.0
+	var x_offset: float = (track_count - 1) * spacing * 0.5
+	var x_pos: float    = float(track_idx) * spacing - x_offset
 	var pos      := Vector3(x_pos, 0.5, 5.0)
 
 	var obs := obstacle_scene.instantiate() as Node3D

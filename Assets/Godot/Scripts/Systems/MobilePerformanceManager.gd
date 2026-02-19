@@ -74,7 +74,7 @@ func _ready() -> void:
 # Tier detection
 # ---------------------------------------------------------------------------
 func _detect_tier() -> DeviceTier:
-	var ram_mb   := OS.get_memory_info().get("physical", 0) / (1024 * 1024)
+	var ram_mb: int = int(OS.get_memory_info().get("physical", 0)) / (1024 * 1024)
 	var renderer := RenderingServer.get_video_adapter_name().to_lower()
 
 	# Low: very old chipsets or very low RAM

@@ -159,7 +159,7 @@ func _random_color_index() -> int:
 
 
 func _effective_spawn_rate() -> float:
-	var override := GameManager.spawn_rate_override
+	var override: float = GameManager.spawn_rate_override
 	return override if override > 0.0 else spawn_rate
 
 
