@@ -78,18 +78,6 @@ enemy_scene = ExtResource("7_enemy")
 [node name="UIManager" type="CanvasLayer" parent="."]
 layer = 1
 script = ExtResource("4_uiman")
-hud_panel = NodePath("HUDPanel")
-main_menu_panel = NodePath("MainMenuPanel")
-pause_menu_panel = NodePath("PauseMenuPanel")
-game_over_panel = NodePath("GameOverPanel")
-level_complete_panel = NodePath("LevelCompletePanel")
-score_label = NodePath("HUDPanel/MarginContainer/VBoxContainer/ScoreLabel")
-lives_label = NodePath("HUDPanel/MarginContainer/VBoxContainer/LivesLabel")
-level_label = NodePath("HUDPanel/MarginContainer/VBoxContainer/LevelLabel")
-target_label = NodePath("HUDPanel/MarginContainer/VBoxContainer/TargetLabel")
-next_cube_preview = NodePath("HUDPanel/MarginContainer/VBoxContainer/NextCubePreview")
-final_score_label = NodePath("GameOverPanel/CenterContainer/VBoxContainer/FinalScoreLabel")
-level_complete_score_label = NodePath("LevelCompletePanel/CenterContainer/VBoxContainer/LevelCompleteScoreLabel")
 
 ; ── HUD panel (shown during gameplay) ────────────────────────────────────────
 [node name="HUDPanel" type="Panel" parent="UIManager"]

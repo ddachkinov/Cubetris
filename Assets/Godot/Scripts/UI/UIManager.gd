@@ -1,31 +1,31 @@
 extends CanvasLayer
 
-## UIManager — attached to a CanvasLayer node in the main scene.
-## Manages HUD, menus and state-driven panel visibility.
+## UIManager — attached to the UIManager CanvasLayer in MainGame.tscn.
+## Uses @onready to find child nodes directly — no Inspector wiring needed.
 
 # ---------------------------------------------------------------------------
-# Panel references — assign in the Inspector
+# Panel references — resolved from child hierarchy at runtime
 # ---------------------------------------------------------------------------
-@export var hud_panel:            Control
-@export var main_menu_panel:      Control
-@export var pause_menu_panel:     Control
-@export var game_over_panel:      Control
-@export var level_complete_panel: Control
+@onready var hud_panel:            Control = $HUDPanel
+@onready var main_menu_panel:      Control = $MainMenuPanel
+@onready var pause_menu_panel:     Control = $PauseMenuPanel
+@onready var game_over_panel:      Control = $GameOverPanel
+@onready var level_complete_panel: Control = $LevelCompletePanel
 
 # ---------------------------------------------------------------------------
 # HUD elements
 # ---------------------------------------------------------------------------
-@export var score_label:       Label
-@export var lives_label:       Label
-@export var level_label:       Label
-@export var target_label:      Label
-@export var next_cube_preview: ColorRect   ## Tinted to show upcoming cube color
+@onready var score_label:       Label    = $HUDPanel/MarginContainer/VBoxContainer/ScoreLabel
+@onready var lives_label:       Label    = $HUDPanel/MarginContainer/VBoxContainer/LivesLabel
+@onready var level_label:       Label    = $HUDPanel/MarginContainer/VBoxContainer/LevelLabel
+@onready var target_label:      Label    = $HUDPanel/MarginContainer/VBoxContainer/TargetLabel
+@onready var next_cube_preview: ColorRect = $HUDPanel/MarginContainer/VBoxContainer/NextCubePreview
 
 # ---------------------------------------------------------------------------
-# Result screen elements
+# Result-screen elements
 # ---------------------------------------------------------------------------
-@export var final_score_label:         Label
-@export var level_complete_score_label: Label
+@onready var final_score_label:         Label = $GameOverPanel/CenterContainer/VBoxContainer/FinalScoreLabel
+@onready var level_complete_score_label: Label = $LevelCompletePanel/CenterContainer/VBoxContainer/LevelCompleteScoreLabel
 
 # ---------------------------------------------------------------------------
 # Built-ins
@@ -47,8 +47,6 @@ func _ready() -> void:
 
 
 func _exit_tree() -> void:
-	# Signals are auto-disconnected by Godot when node is freed,
-	# but explicit cleanup avoids edge cases with Autoloads.
 	if GameManager.score_changed.is_connected(_on_score_changed):
 		GameManager.score_changed.disconnect(_on_score_changed)
 	if GameManager.lives_changed.is_connected(_on_lives_changed):
@@ -127,9 +125,9 @@ func _show_hud() -> void:
 	_set_panel(level_complete_panel, false)
 
 
-func show_pause_menu(visible: bool) -> void:
-	_set_panel(pause_menu_panel, visible)
-	_set_panel(hud_panel,        not visible)
+func show_pause_menu(is_visible: bool) -> void:
+	_set_panel(pause_menu_panel, is_visible)
+	_set_panel(hud_panel,        not is_visible)
 
 
 func show_game_over(score: int) -> void:
@@ -141,18 +139,18 @@ func show_game_over(score: int) -> void:
 
 func show_level_complete(score: int) -> void:
 	_set_panel(level_complete_panel, true)
-	_set_panel(hud_panel,           false)
+	_set_panel(hud_panel,            false)
 	if level_complete_score_label:
 		level_complete_score_label.text = "Score: %d" % score
 
 
-func _set_panel(panel: Control, visible: bool) -> void:
+func _set_panel(panel: Control, is_visible: bool) -> void:
 	if panel:
-		panel.visible = visible
+		panel.visible = is_visible
 
 
 # ---------------------------------------------------------------------------
-# Button callbacks — wire up in the Godot Inspector (Node → Signals)
+# Button callbacks — connected via [connection] entries in MainGame.tscn
 # ---------------------------------------------------------------------------
 func on_start_game_pressed()  -> void: GameManager.start_game()
 func on_resume_pressed()      -> void: GameManager.toggle_pause()
