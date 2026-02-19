@@ -30,6 +30,17 @@ var _voxel_container: Node3D
 # Built-ins
 # ---------------------------------------------------------------------------
 func _ready() -> void:
+	# Autoloads cannot have @export PackedScene vars set via the editor,
+	# so fall back to loading from known prefab paths when not assigned.
+	if cube_scene == null:
+		cube_scene = load("res://Assets/Godot/Scenes/Prefabs/CubePrefab.tscn")
+		if cube_scene == null:
+			push_error("ObjectPool: CubePrefab.tscn not found!")
+	if voxel_scene == null:
+		voxel_scene = load("res://Assets/Godot/Scenes/Prefabs/VoxelPrefab.tscn")
+		if voxel_scene == null:
+			push_error("ObjectPool: VoxelPrefab.tscn not found!")
+
 	_cube_container  = Node3D.new()
 	_cube_container.name = "CubePool"
 	add_child(_cube_container)

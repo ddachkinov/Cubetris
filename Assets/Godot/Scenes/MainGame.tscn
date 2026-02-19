@@ -1,0 +1,248 @@
+[gd_scene load_steps=11 format=3]
+
+[ext_resource type="Script" path="res://Assets/Godot/Scripts/Gameplay/WallController.gd" id="1_wall"]
+[ext_resource type="Script" path="res://Assets/Godot/Scripts/Gameplay/Spawner.gd" id="2_spawner"]
+[ext_resource type="Script" path="res://Assets/Godot/Scripts/Obstacles/ObstacleManager.gd" id="3_obsmgr"]
+[ext_resource type="Script" path="res://Assets/Godot/Scripts/UI/UIManager.gd" id="4_uiman"]
+[ext_resource type="Script" path="res://Assets/Godot/Scripts/UI/MobileUIOverlay.gd" id="5_mobile"]
+[ext_resource type="PackedScene" path="res://Assets/Godot/Scenes/Prefabs/ObstaclePrefab.tscn" id="6_obs"]
+[ext_resource type="PackedScene" path="res://Assets/Godot/Scenes/Prefabs/EnemyPrefab.tscn" id="7_enemy"]
+
+[sub_resource type="BoxMesh" id="BoxMesh_wall"]
+size = Vector3(12, 6, 0.5)
+
+[sub_resource type="BoxShape3D" id="BoxShape3D_wall"]
+size = Vector3(12, 6, 0.5)
+
+[sub_resource type="BoxMesh" id="BoxMesh_ground"]
+size = Vector3(20, 0.2, 40)
+
+[sub_resource type="BoxShape3D" id="BoxShape3D_ground"]
+size = Vector3(20, 0.2, 40)
+
+; ─── Scene root ──────────────────────────────────────────────────────────────
+[node name="MainGame" type="Node3D"]
+
+; ─── Camera ──────────────────────────────────────────────────────────────────
+; Position (0,6,-14), rotated 180° Y then -15° X so it faces +Z (the wall)
+; and looks slightly downward at the play field.
+[node name="Camera3D" type="Camera3D" parent="."]
+transform = Transform3D(-1, 0, 0, 0, 0.9659, 0.2588, 0, 0.2588, -0.9659, 0, 6, -14)
+current = true
+fov = 75.0
+
+; ─── Directional light ───────────────────────────────────────────────────────
+; Shines from above-and-behind-camera toward the wall (warm sunlight feel)
+[node name="DirectionalLight3D" type="DirectionalLight3D" parent="."]
+transform = Transform3D(0.866, 0, -0.5, -0.433, 0.5, -0.75, 0.25, 0.866, 0.433, 0, 10, 0)
+light_energy = 1.2
+shadow_enabled = true
+
+; ─── Ground plane ─────────────────────────────────────────────────────────────
+[node name="Ground" type="StaticBody3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -0.1, 0)
+
+[node name="MeshInstance3D" type="MeshInstance3D" parent="Ground"]
+mesh = SubResource("BoxMesh_ground")
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="Ground"]
+shape = SubResource("BoxShape3D_ground")
+
+; ─── Wall (AnimatableBody3D so physics registers movement) ───────────────────
+; WallController.gd extends Node3D — valid to attach to AnimatableBody3D
+; because AnimatableBody3D inherits from Node3D.
+; Starts at Z=10; moves toward Z=-10 (game_over_z) during play.
+[node name="Wall" type="AnimatableBody3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 2, 10)
+script = ExtResource("1_wall")
+
+[node name="MeshInstance3D" type="MeshInstance3D" parent="Wall"]
+mesh = SubResource("BoxMesh_wall")
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="Wall"]
+shape = SubResource("BoxShape3D_wall")
+
+; ─── Spawner ──────────────────────────────────────────────────────────────────
+; Uses ObjectPool (autoload) for cube instances.
+; Track positions are calculated in world space by the script.
+[node name="Spawner" type="Node3D" parent="."]
+script = ExtResource("2_spawner")
+
+; ─── ObstacleManager ──────────────────────────────────────────────────────────
+[node name="ObstacleManager" type="Node3D" parent="."]
+script = ExtResource("3_obsmgr")
+obstacle_scene = ExtResource("6_obs")
+enemy_scene = ExtResource("7_enemy")
+
+; ─── UI ───────────────────────────────────────────────────────────────────────
+[node name="UIManager" type="CanvasLayer" parent="."]
+layer = 1
+script = ExtResource("4_uiman")
+hud_panel = NodePath("HUDPanel")
+main_menu_panel = NodePath("MainMenuPanel")
+pause_menu_panel = NodePath("PauseMenuPanel")
+game_over_panel = NodePath("GameOverPanel")
+level_complete_panel = NodePath("LevelCompletePanel")
+score_label = NodePath("HUDPanel/MarginContainer/VBoxContainer/ScoreLabel")
+lives_label = NodePath("HUDPanel/MarginContainer/VBoxContainer/LivesLabel")
+level_label = NodePath("HUDPanel/MarginContainer/VBoxContainer/LevelLabel")
+target_label = NodePath("HUDPanel/MarginContainer/VBoxContainer/TargetLabel")
+next_cube_preview = NodePath("HUDPanel/MarginContainer/VBoxContainer/NextCubePreview")
+final_score_label = NodePath("GameOverPanel/CenterContainer/VBoxContainer/FinalScoreLabel")
+level_complete_score_label = NodePath("LevelCompletePanel/CenterContainer/VBoxContainer/LevelCompleteScoreLabel")
+
+; ── HUD panel (shown during gameplay) ────────────────────────────────────────
+[node name="HUDPanel" type="Panel" parent="UIManager"]
+visible = false
+anchor_right = 1.0
+anchor_bottom = 1.0
+
+[node name="MarginContainer" type="MarginContainer" parent="UIManager/HUDPanel"]
+anchor_right = 1.0
+anchor_bottom = 1.0
+theme_override_constants/margin_left = 16
+theme_override_constants/margin_top = 16
+theme_override_constants/margin_right = 16
+theme_override_constants/margin_bottom = 16
+
+[node name="VBoxContainer" type="VBoxContainer" parent="UIManager/HUDPanel/MarginContainer"]
+layout_mode = 2
+
+[node name="ScoreLabel" type="Label" parent="UIManager/HUDPanel/MarginContainer/VBoxContainer"]
+text = "Score: 0"
+theme_override_font_sizes/font_size = 24
+
+[node name="LivesLabel" type="Label" parent="UIManager/HUDPanel/MarginContainer/VBoxContainer"]
+text = "Lives: 3"
+theme_override_font_sizes/font_size = 24
+
+[node name="LevelLabel" type="Label" parent="UIManager/HUDPanel/MarginContainer/VBoxContainer"]
+text = "Level: 1 / 20"
+theme_override_font_sizes/font_size = 20
+
+[node name="TargetLabel" type="Label" parent="UIManager/HUDPanel/MarginContainer/VBoxContainer"]
+text = "Target: 0"
+theme_override_font_sizes/font_size = 20
+
+[node name="NextCubePreview" type="ColorRect" parent="UIManager/HUDPanel/MarginContainer/VBoxContainer"]
+color = Color(1, 0, 0, 1)
+custom_minimum_size = Vector2(48, 48)
+
+; ── Main-menu panel ───────────────────────────────────────────────────────────
+[node name="MainMenuPanel" type="Panel" parent="UIManager"]
+visible = true
+anchor_right = 1.0
+anchor_bottom = 1.0
+
+[node name="CenterContainer" type="CenterContainer" parent="UIManager/MainMenuPanel"]
+anchor_right = 1.0
+anchor_bottom = 1.0
+
+[node name="VBoxContainer" type="VBoxContainer" parent="UIManager/MainMenuPanel/CenterContainer"]
+theme_override_constants/separation = 20
+
+[node name="TitleLabel" type="Label" parent="UIManager/MainMenuPanel/CenterContainer/VBoxContainer"]
+text = "CUBETRIS"
+theme_override_font_sizes/font_size = 64
+horizontal_alignment = 1
+
+[node name="StartButton" type="Button" parent="UIManager/MainMenuPanel/CenterContainer/VBoxContainer"]
+text = "Start Game"
+custom_minimum_size = Vector2(240, 56)
+
+[node name="QuitButton" type="Button" parent="UIManager/MainMenuPanel/CenterContainer/VBoxContainer"]
+text = "Quit"
+custom_minimum_size = Vector2(240, 56)
+
+; ── Pause-menu panel ──────────────────────────────────────────────────────────
+[node name="PauseMenuPanel" type="Panel" parent="UIManager"]
+visible = false
+anchor_right = 1.0
+anchor_bottom = 1.0
+
+[node name="CenterContainer" type="CenterContainer" parent="UIManager/PauseMenuPanel"]
+anchor_right = 1.0
+anchor_bottom = 1.0
+
+[node name="VBoxContainer" type="VBoxContainer" parent="UIManager/PauseMenuPanel/CenterContainer"]
+theme_override_constants/separation = 20
+
+[node name="PausedLabel" type="Label" parent="UIManager/PauseMenuPanel/CenterContainer/VBoxContainer"]
+text = "PAUSED"
+theme_override_font_sizes/font_size = 48
+horizontal_alignment = 1
+
+[node name="ResumeButton" type="Button" parent="UIManager/PauseMenuPanel/CenterContainer/VBoxContainer"]
+text = "Resume"
+custom_minimum_size = Vector2(240, 56)
+
+[node name="QuitButton2" type="Button" parent="UIManager/PauseMenuPanel/CenterContainer/VBoxContainer"]
+text = "Quit to Menu"
+custom_minimum_size = Vector2(240, 56)
+
+; ── Game-over panel ───────────────────────────────────────────────────────────
+[node name="GameOverPanel" type="Panel" parent="UIManager"]
+visible = false
+anchor_right = 1.0
+anchor_bottom = 1.0
+
+[node name="CenterContainer" type="CenterContainer" parent="UIManager/GameOverPanel"]
+anchor_right = 1.0
+anchor_bottom = 1.0
+
+[node name="VBoxContainer" type="VBoxContainer" parent="UIManager/GameOverPanel/CenterContainer"]
+theme_override_constants/separation = 20
+
+[node name="GameOverLabel" type="Label" parent="UIManager/GameOverPanel/CenterContainer/VBoxContainer"]
+text = "GAME OVER"
+theme_override_font_sizes/font_size = 48
+horizontal_alignment = 1
+
+[node name="FinalScoreLabel" type="Label" parent="UIManager/GameOverPanel/CenterContainer/VBoxContainer"]
+text = "Final Score: 0"
+theme_override_font_sizes/font_size = 28
+horizontal_alignment = 1
+
+[node name="RestartButton" type="Button" parent="UIManager/GameOverPanel/CenterContainer/VBoxContainer"]
+text = "Restart"
+custom_minimum_size = Vector2(240, 56)
+
+; ── Level-complete panel ──────────────────────────────────────────────────────
+[node name="LevelCompletePanel" type="Panel" parent="UIManager"]
+visible = false
+anchor_right = 1.0
+anchor_bottom = 1.0
+
+[node name="CenterContainer" type="CenterContainer" parent="UIManager/LevelCompletePanel"]
+anchor_right = 1.0
+anchor_bottom = 1.0
+
+[node name="VBoxContainer" type="VBoxContainer" parent="UIManager/LevelCompletePanel/CenterContainer"]
+theme_override_constants/separation = 20
+
+[node name="CompleteLabel" type="Label" parent="UIManager/LevelCompletePanel/CenterContainer/VBoxContainer"]
+text = "LEVEL COMPLETE!"
+theme_override_font_sizes/font_size = 48
+horizontal_alignment = 1
+
+[node name="LevelCompleteScoreLabel" type="Label" parent="UIManager/LevelCompletePanel/CenterContainer/VBoxContainer"]
+text = "Score: 0"
+theme_override_font_sizes/font_size = 28
+horizontal_alignment = 1
+
+[node name="NextLevelButton" type="Button" parent="UIManager/LevelCompletePanel/CenterContainer/VBoxContainer"]
+text = "Next Level"
+custom_minimum_size = Vector2(240, 56)
+
+; ─── Mobile overlay (renders above UIManager) ─────────────────────────────────
+[node name="MobileUIOverlay" type="CanvasLayer" parent="."]
+layer = 2
+script = ExtResource("5_mobile")
+
+; ─── Button signal connections ────────────────────────────────────────────────
+[connection signal="pressed" from="UIManager/MainMenuPanel/CenterContainer/VBoxContainer/StartButton" to="UIManager" method="on_start_game_pressed"]
+[connection signal="pressed" from="UIManager/MainMenuPanel/CenterContainer/VBoxContainer/QuitButton" to="UIManager" method="on_quit_pressed"]
+[connection signal="pressed" from="UIManager/PauseMenuPanel/CenterContainer/VBoxContainer/ResumeButton" to="UIManager" method="on_resume_pressed"]
+[connection signal="pressed" from="UIManager/PauseMenuPanel/CenterContainer/VBoxContainer/QuitButton2" to="UIManager" method="on_quit_pressed"]
+[connection signal="pressed" from="UIManager/GameOverPanel/CenterContainer/VBoxContainer/RestartButton" to="UIManager" method="on_restart_pressed"]
+[connection signal="pressed" from="UIManager/LevelCompletePanel/CenterContainer/VBoxContainer/NextLevelButton" to="UIManager" method="on_next_level_pressed"]

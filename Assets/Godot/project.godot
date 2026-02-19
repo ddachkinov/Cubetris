@@ -9,7 +9,7 @@ config/name="Cubetris"
 config/description="Physics-based Cube Tetris with Explosive Effects"
 config/version="1.0.0"
 run/main_scene="res://Assets/Godot/Scenes/MainGame.tscn"
-config/features=PackedStringArray("4.2", "Forward Plus")
+config/features=PackedStringArray("4.6", "Forward Plus")
 config/icon="res://Assets/Godot/icon.svg"
 
 [autoload]
