@@ -27,9 +27,10 @@ var is_registered: bool = false
 var grid_position: Vector2i = Vector2i.ZERO
 
 var _launch_time: float = 0.0
-var _travel_speed: float = 15.0  # Units per second on rail
+var _travel_speed: float = 20.0  # Units per second on rail
 var _locked_x: float = 0.0       # X position locked to track
 var _locked_y: float = 0.0       # Y position locked during travel
+var _target_z: float = 9.0       # Fixed landing Z position (wall is at 10)
 
 # ---------------------------------------------------------------------------
 # Node references
@@ -58,21 +59,13 @@ func _physics_process(delta: float) -> void:
 # Rail-based travel
 # ---------------------------------------------------------------------------
 func _travel_on_rail(delta: float) -> void:
-	# Move forward (toward +Z, the wall direction)
+	# Move toward fixed target Z position (single-layer gameplay)
 	var next_z: float = global_position.z + _travel_speed * delta
 
-	# Raycast ahead to detect wall or other cubes
-	var space_state := get_world_3d().direct_space_state
-	var query := PhysicsRayQueryParameters3D.create(
-		global_position,
-		global_position + Vector3(0, 0, 1.0)  # 1 unit ahead
-	)
-	query.exclude = [self]
-	var result := space_state.intersect_ray(query)
-
-	if result:
-		# Hit something — stop traveling and land
-		global_position.z = result.position.z - 0.5  # Stop 0.5 units before collision
+	# Check if we've reached or passed the target
+	if next_z >= _target_z:
+		# Snap to exact landing position
+		global_position = Vector3(_locked_x, _locked_y, _target_z)
 		_stop_traveling()
 	else:
 		# Keep moving on rail, locked to track X/Y
@@ -115,7 +108,7 @@ func on_launched() -> void:
 
 func _stop_traveling() -> void:
 	is_traveling = false
-	freeze = false  # Enable physics
+	freeze = true  # Stay kinematic - no physics wobble
 	_set_at_rest()  # Immediately snap to grid and register
 
 
@@ -151,25 +144,23 @@ func _set_at_rest() -> void:
 	if is_at_rest:
 		return
 	is_at_rest = true
-
-	linear_velocity  = Vector3.ZERO
-	angular_velocity = Vector3.ZERO
-	sleeping = true   # Let Godot know the body is sleeping
+	freeze = true  # Ensure kinematic state
 
 	_snap_to_grid()
 	_register_in_grid()
 
-	print("Cube at rest | color=%d | grid=%s" % [color_index, grid_position])
+	print("Cube landed | color=%d | grid=%s" % [color_index, grid_position])
 
 
 # ---------------------------------------------------------------------------
 # Grid
 # ---------------------------------------------------------------------------
 func _snap_to_grid() -> void:
+	# Single-layer gameplay - all cubes at fixed Y and Z
 	var snapped := Vector3(
 		roundf(global_position.x),
-		roundf(global_position.y),
-		roundf(global_position.z)
+		0.5,        # Fixed Y - on top of ground
+		_target_z   # Fixed Z - at the wall
 	)
 	global_position = snapped
 	grid_position   = MatchDetector.world_to_grid(snapped)

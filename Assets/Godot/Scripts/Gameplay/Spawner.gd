@@ -18,11 +18,12 @@ extends Node3D
 @export var special_cube_chance: float = 0.0
 
 @export var cube_colors: Array[Color] = [
-	Color.RED,
-	Color.BLUE,
-	Color.GREEN,
-	Color.YELLOW,
-	Color.MAGENTA,
+	Color(1.0, 0.3, 0.3),   # Bright coral red
+	Color(0.3, 0.7, 1.0),   # Bright sky blue
+	Color(0.4, 1.0, 0.4),   # Bright lime green
+	Color(1.0, 1.0, 0.3),   # Bright sunny yellow
+	Color(1.0, 0.5, 1.0),   # Bright pink
+	Color(0.5, 1.0, 1.0),   # Bright cyan
 ]
 
 # ---------------------------------------------------------------------------
@@ -148,9 +149,7 @@ func _get_track_position(track_index: int) -> Vector3:
 
 
 func _random_color_index() -> int:
-	if randf() < special_cube_chance:
-		return 5   # Special
-	return randi() % 5
+	return randi() % cube_colors.size()
 
 
 func _effective_spawn_rate() -> float:
