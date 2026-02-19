@@ -70,17 +70,17 @@ func _process(delta: float) -> void:
 func _handle_input() -> void:
 	# Keyboard / gamepad
 	if Input.is_action_just_pressed("move_left"):
-		_move_track(-1)
-	elif Input.is_action_just_pressed("move_right"):
 		_move_track(1)
+	elif Input.is_action_just_pressed("move_right"):
+		_move_track(-1)
 
 	if Input.is_action_just_pressed("launch") and current_cube != null:
 		_launch_cube()
 
 
 # Touch signal callbacks -------------------------------------------------------
-func _on_swipe_left()  -> void: _move_track(-1)
-func _on_swipe_right() -> void: _move_track(1)
+func _on_swipe_left()  -> void: _move_track(1)
+func _on_swipe_right() -> void: _move_track(-1)
 func _on_tap()         -> void:
 	if current_cube != null:
 		_launch_cube()
@@ -123,12 +123,7 @@ func _launch_cube() -> void:
 
 	var ctrl := current_cube as CubeController
 	if ctrl:
-		ctrl.set_kinematic(false)
-		ctrl.on_launched()
-		# Apply forward velocity directly
-		var rb := current_cube as RigidBody3D
-		if rb:
-			rb.linear_velocity = Vector3(0, 0, launch_force)
+		ctrl.on_launched()  # Starts rail-based travel (no velocity needed)
 
 	current_cube = null
 	# Next cube spawns via timer

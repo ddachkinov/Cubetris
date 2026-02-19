@@ -71,6 +71,7 @@ func start_game() -> void:
 	game_time    = 0.0
 	lives        = 3
 
+	LevelManager.load_level(0)  # Load first level
 	_change_state(GameState.PLAYING)
 
 	if spawner:
