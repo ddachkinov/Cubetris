@@ -29,8 +29,8 @@ var grid_position: Vector2i = Vector2i.ZERO
 var _launch_time: float = 0.0
 var _travel_speed: float = 20.0  # Units per second on rail
 var _locked_x: float = 0.0       # X position locked to track
-var _locked_y: float = 0.0       # Y position locked during travel
-var _target_z: float = 9.0       # Fixed landing Z position (wall is at 10)
+var _locked_y: float = 0.5       # Y position locked during travel (ground level)
+var _target_z: float = 9.0       # Default landing Z (updates via raycast for stacking)
 
 # ---------------------------------------------------------------------------
 # Node references
@@ -59,7 +59,27 @@ func _physics_process(delta: float) -> void:
 # Rail-based travel
 # ---------------------------------------------------------------------------
 func _travel_on_rail(delta: float) -> void:
-	# Move toward fixed target Z position (single-layer gameplay)
+	# Raycast forward to detect obstacles (cubes or wall) for stacking
+	var space_state: PhysicsDirectSpaceState3D = get_world_3d().direct_space_state
+	var ray_from: Vector3 = global_position
+	var ray_to: Vector3 = Vector3(_locked_x, _locked_y, 10.0)  # Wall at Z=10
+
+	var query := PhysicsRayQueryParameters3D.create(ray_from, ray_to)
+	query.exclude = [self]  # Don't hit ourselves
+	query.collision_mask = 1  # Default physics layer
+
+	var result: Dictionary = space_state.intersect_ray(query)
+
+	# Determine target Z based on raycast
+	if result:
+		# Hit something - stop 1 unit before it (cube size = 1)
+		var hit_z: float = result.position.z
+		_target_z = hit_z - 1.0
+	else:
+		# Nothing in the way - travel to wall
+		_target_z = 9.0  # 1 unit before wall at Z=10
+
+	# Move toward target Z
 	var next_z: float = global_position.z + _travel_speed * delta
 
 	# Check if we've reached or passed the target
@@ -156,11 +176,11 @@ func _set_at_rest() -> void:
 # Grid
 # ---------------------------------------------------------------------------
 func _snap_to_grid() -> void:
-	# Single-layer gameplay - all cubes at fixed Y and Z
+	# Snap to grid - X rounded, Y at ground level, Z from stacking logic
 	var snapped := Vector3(
 		roundf(global_position.x),
-		0.5,        # Fixed Y - on top of ground
-		_target_z   # Fixed Z - at the wall
+		0.5,                    # Fixed Y - on top of ground
+		roundf(global_position.z)  # Z rounded to nearest unit (stacking layers)
 	)
 	global_position = snapped
 	grid_position   = MatchDetector.world_to_grid(snapped)

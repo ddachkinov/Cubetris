@@ -10,7 +10,7 @@ extends Node3D
 @export var cube_scene: PackedScene          ## Assign CubePrefab.tscn
 @export var track_count: int = 10
 @export var track_spacing: float = 1.0
-@export var spawn_height: float = 2.0
+@export var spawn_height: float = 0.5  # Ground level - consistent throughout travel
 @export var spawn_z: float = -10.0
 @export var launch_force: float = 15.0
 @export var track_switch_speed: float = 10.0
@@ -18,12 +18,14 @@ extends Node3D
 @export var special_cube_chance: float = 0.0
 
 @export var cube_colors: Array[Color] = [
-	Color(1.0, 0.3, 0.3),   # Bright coral red
-	Color(0.3, 0.7, 1.0),   # Bright sky blue
-	Color(0.4, 1.0, 0.4),   # Bright lime green
-	Color(1.0, 1.0, 0.3),   # Bright sunny yellow
-	Color(1.0, 0.5, 1.0),   # Bright pink
-	Color(0.5, 1.0, 1.0),   # Bright cyan
+	Color(1.0, 0.0, 0.2),   # VIVID hot red
+	Color(0.0, 0.5, 1.0),   # VIVID electric blue
+	Color(0.0, 1.0, 0.2),   # VIVID neon green
+	Color(1.0, 0.9, 0.0),   # VIVID golden yellow
+	Color(1.0, 0.0, 0.8),   # VIVID magenta pink
+	Color(0.0, 1.0, 1.0),   # VIVID cyan
+	Color(1.0, 0.4, 0.0),   # VIVID orange
+	Color(0.6, 0.0, 1.0),   # VIVID purple
 ]
 
 # ---------------------------------------------------------------------------
@@ -34,6 +36,7 @@ var current_cube: Node3D = null      # The cube the player is aiming
 var next_cube_color: int = 0         # Index into cube_colors
 var _is_spawning: bool = false
 var _spawn_timer: float = 0.0
+var _landing_indicator: MeshInstance3D = null  # Ghost cube showing landing position
 
 # ---------------------------------------------------------------------------
 # Built-ins
@@ -49,6 +52,9 @@ func _ready() -> void:
 	TouchInputManager.swiped_left.connect(_on_swipe_left)
 	TouchInputManager.swiped_right.connect(_on_swipe_right)
 	TouchInputManager.tapped.connect(_on_tap)
+
+	# Create landing indicator (ghost cube)
+	_create_landing_indicator()
 
 
 func _process(delta: float) -> void:
@@ -127,6 +133,11 @@ func _launch_cube() -> void:
 		ctrl.on_launched()  # Starts rail-based travel (no velocity needed)
 
 	current_cube = null
+
+	# Hide landing indicator
+	if _landing_indicator:
+		_landing_indicator.visible = false
+
 	# Next cube spawns via timer
 
 
@@ -137,6 +148,9 @@ func _update_cube_position(delta: float) -> void:
 	current_cube.global_position = current_cube.global_position.lerp(
 		target, delta * track_switch_speed
 	)
+
+	# Update landing indicator position
+	_update_landing_indicator()
 
 
 # ---------------------------------------------------------------------------
@@ -203,3 +217,57 @@ func _draw_debug() -> void:
 		# In-game: just print; replace with DebugDraw3D plugin if desired
 		if i == current_track:
 			print("► Track %d  pos=%s" % [i, pos])
+
+
+# ---------------------------------------------------------------------------
+# Landing indicator (ghost cube)
+# ---------------------------------------------------------------------------
+func _create_landing_indicator() -> void:
+	_landing_indicator = MeshInstance3D.new()
+	var box_mesh := BoxMesh.new()
+	box_mesh.size = Vector3(1.0, 1.0, 1.0)
+	_landing_indicator.mesh = box_mesh
+
+	# Semi-transparent white material
+	var mat := StandardMaterial3D.new()
+	mat.albedo_color = Color(1.0, 1.0, 1.0, 0.3)
+	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	_landing_indicator.set_surface_override_material(0, mat)
+
+	add_child(_landing_indicator)
+	_landing_indicator.visible = false
+
+
+func _update_landing_indicator() -> void:
+	if not _landing_indicator or not current_cube:
+		if _landing_indicator:
+			_landing_indicator.visible = false
+		return
+
+	# Raycast from current cube position forward to find landing position
+	var space_state: PhysicsDirectSpaceState3D = get_world_3d().direct_space_state
+	var x_pos: float = current_cube.global_position.x
+	var ray_from: Vector3 = Vector3(x_pos, 0.5, spawn_z)
+	var ray_to: Vector3 = Vector3(x_pos, 0.5, 10.0)  # Wall at Z=10
+
+	var query := PhysicsRayQueryParameters3D.create(ray_from, ray_to)
+	query.exclude = [current_cube]
+	query.collision_mask = 1
+
+	var result: Dictionary = space_state.intersect_ray(query)
+
+	var target_z: float = 9.0  # Default: in front of wall
+	if result:
+		# Hit something - land 1 unit before it
+		target_z = result.position.z - 1.0
+
+	_landing_indicator.global_position = Vector3(x_pos, 0.5, target_z)
+	_landing_indicator.visible = true
+
+	# Match color to current cube
+	var ctrl := current_cube as CubeController
+	if ctrl:
+		var mat := StandardMaterial3D.new()
+		mat.albedo_color = Color(ctrl.cube_color.r, ctrl.cube_color.g, ctrl.cube_color.b, 0.3)
+		mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+		_landing_indicator.set_surface_override_material(0, mat)
