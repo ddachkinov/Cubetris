@@ -15,11 +15,11 @@ extends CanvasLayer
 # ---------------------------------------------------------------------------
 # HUD elements
 # ---------------------------------------------------------------------------
-@onready var score_label:       Label    = $HUDPanel/MarginContainer/VBoxContainer/ScoreLabel
-@onready var lives_label:       Label    = $HUDPanel/MarginContainer/VBoxContainer/LivesLabel
-@onready var level_label:       Label    = $HUDPanel/MarginContainer/VBoxContainer/LevelLabel
-@onready var target_label:      Label    = $HUDPanel/MarginContainer/VBoxContainer/TargetLabel
-@onready var next_cube_preview: ColorRect = $HUDPanel/MarginContainer/VBoxContainer/NextCubePreview
+@onready var score_label:       Label      = $HUDPanel/MarginContainer/VBoxContainer/ScoreLabel
+@onready var lives_label:       Label      = $HUDPanel/MarginContainer/VBoxContainer/LivesLabel
+@onready var level_label:       Label      = $HUDPanel/MarginContainer/VBoxContainer/LevelLabel
+@onready var target_label:      Label      = $HUDPanel/MarginContainer/VBoxContainer/TargetLabel
+@onready var next_cube_preview: SubViewport = $HUDPanel/MarginContainer/VBoxContainer/NextCubePreview/SubViewport
 
 # ---------------------------------------------------------------------------
 # Result-screen elements
@@ -46,12 +46,6 @@ func _ready() -> void:
 	show_main_menu()
 
 
-func _process(delta: float) -> void:
-	# Rotate next cube preview continuously
-	if next_cube_preview and next_cube_preview.has_meta("rotating"):
-		next_cube_preview.rotation += delta * 2.0  # 2 radians per second
-
-
 func _exit_tree() -> void:
 	if GameManager.score_changed.is_connected(_on_score_changed):
 		GameManager.score_changed.disconnect(_on_score_changed)
@@ -76,27 +70,8 @@ func update_next_cube_preview(color: Color) -> void:
 	if not next_cube_preview:
 		return
 
-	# Slide-out animation: push current preview out, bring new one in
-	var tween: Tween = create_tween()
-	tween.set_parallel(false)
-
-	# Slide current preview to the right and fade out
-	tween.tween_property(next_cube_preview, "modulate:a", 0.0, 0.2)
-	tween.tween_property(next_cube_preview, "position:x", 100.0, 0.2)
-
-	# Update color
-	tween.tween_callback(func(): next_cube_preview.color = color)
-
-	# Reset position off-screen to the left
-	tween.tween_callback(func(): next_cube_preview.position.x = -100.0)
-
-	# Slide new preview in from the left and fade in
-	tween.tween_property(next_cube_preview, "modulate:a", 1.0, 0.2)
-	tween.tween_property(next_cube_preview, "position:x", 0.0, 0.2)
-
-	# Add continuous rotation in _process
-	if not next_cube_preview.has_meta("rotating"):
-		next_cube_preview.set_meta("rotating", true)
+	# Call the SubViewport's set_cube_color method (which handles 3D material update)
+	next_cube_preview.set_cube_color(color)
 
 
 func _on_level_loaded(level_data: Dictionary) -> void:

@@ -1,4 +1,4 @@
-[gd_scene load_steps=21 format=3]
+[gd_scene load_steps=23 format=3]
 
 [ext_resource type="Script" path="res://Scripts/Gameplay/WallController.gd" id="1_wall"]
 [ext_resource type="Script" path="res://Scripts/Gameplay/Spawner.gd" id="2_spawner"]
@@ -8,6 +8,7 @@
 [ext_resource type="PackedScene" path="res://Scenes/Prefabs/ObstaclePrefab.tscn" id="6_obs"]
 [ext_resource type="PackedScene" path="res://Scenes/Prefabs/EnemyPrefab.tscn" id="7_enemy"]
 [ext_resource type="Shader" path="res://Shaders/GradientSky.gdshader" id="8_sky"]
+[ext_resource type="Script" path="res://Scripts/UI/NextCubePreview3D.gd" id="9_preview"]
 
 [sub_resource type="BoxMesh" id="BoxMesh_wall"]
 size = Vector3(12, 2, 0.5)
@@ -103,6 +104,16 @@ corner_radius_bottom_right = 12
 corner_radius_bottom_left = 12
 shadow_size = 8
 shadow_offset = Vector2(0, 4)
+
+[sub_resource type="BoxMesh" id="BoxMesh_preview_cube"]
+size = Vector3(1, 1, 1)
+
+[sub_resource type="Environment" id="Environment_preview"]
+background_mode = 1
+background_color = Color(0, 0, 0, 0)
+ambient_light_source = 3
+ambient_light_color = Color(0.9, 0.95, 1, 1)
+ambient_light_energy = 0.5
 
 ; ─── Scene root ──────────────────────────────────────────────────────────────
 [node name="MainGame" type="Node3D"]
@@ -260,10 +271,37 @@ theme_override_colors/font_outline_color = Color(0, 0, 0, 1)
 theme_override_constants/outline_size = 4
 theme_override_font_sizes/font_size = 20
 
-[node name="NextCubePreview" type="ColorRect" parent="UIManager/HUDPanel/MarginContainer/VBoxContainer"]
+[node name="NextCubePreview" type="SubViewportContainer" parent="UIManager/HUDPanel/MarginContainer/VBoxContainer"]
 layout_mode = 2
-color = Color(1, 0, 0, 1)
 custom_minimum_size = Vector2(80, 80)
+stretch = true
+
+[node name="SubViewport" type="SubViewport" parent="UIManager/HUDPanel/MarginContainer/VBoxContainer/NextCubePreview"]
+transparent_bg = true
+size = Vector2i(80, 80)
+render_target_update_mode = 4
+script = ExtResource("9_preview")
+
+[node name="PreviewScene" type="Node3D" parent="UIManager/HUDPanel/MarginContainer/VBoxContainer/NextCubePreview/SubViewport"]
+
+[node name="Camera3D" type="Camera3D" parent="UIManager/HUDPanel/MarginContainer/VBoxContainer/NextCubePreview/SubViewport/PreviewScene"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 3)
+projection = 1
+size = 1.5
+near = 0.1
+far = 10.0
+
+[node name="DirectionalLight3D" type="DirectionalLight3D" parent="UIManager/HUDPanel/MarginContainer/VBoxContainer/NextCubePreview/SubViewport/PreviewScene"]
+transform = Transform3D(0.866, -0.25, 0.433, 0, 0.866, 0.5, -0.5, -0.433, 0.75, 2, 2, 2)
+light_energy = 0.8
+shadow_enabled = true
+
+[node name="CubeMesh" type="MeshInstance3D" parent="UIManager/HUDPanel/MarginContainer/VBoxContainer/NextCubePreview/SubViewport/PreviewScene"]
+mesh = SubResource("BoxMesh_preview_cube")
+cast_shadow = 1
+
+[node name="WorldEnvironment" type="WorldEnvironment" parent="UIManager/HUDPanel/MarginContainer/VBoxContainer/NextCubePreview/SubViewport/PreviewScene"]
+environment = SubResource("Environment_preview")
 
 ; ── Main-menu panel ───────────────────────────────────────────────────────────
 [node name="MainMenuPanel" type="Panel" parent="UIManager"]
