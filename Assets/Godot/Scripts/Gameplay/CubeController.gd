@@ -211,7 +211,27 @@ func _unregister_from_grid() -> void:
 func _apply_color(color: Color) -> void:
 	if mesh_instance == null:
 		return
-	# Use a unique surface override so we don't mutate shared materials
+	# Create glossy, vibrant material for each cube
 	var mat := StandardMaterial3D.new()
 	mat.albedo_color = color
+
+	# Glossy finish (like reference image)
+	mat.metallic = 0.0           # Not metallic - plastic/ceramic look
+	mat.roughness = 0.25          # Shiny but not mirror
+	mat.metallic_specular = 0.7  # Bright specular highlights
+
+	# Rim lighting for edge glow
+	mat.rim_enabled = true
+	mat.rim = 0.6
+	mat.rim_tint = 0.8
+
+	# Slight emission for vibrant glow
+	mat.emission_enabled = true
+	mat.emission = color
+	mat.emission_energy_multiplier = 0.15
+
+	# Enable shadows
+	mat.shading_mode = BaseMaterial3D.SHADING_MODE_PER_PIXEL
+
 	mesh_instance.set_surface_override_material(0, mat)
+	mesh_instance.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON

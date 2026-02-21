@@ -1,4 +1,4 @@
-[gd_scene load_steps=11 format=3]
+[gd_scene load_steps=21 format=3]
 
 [ext_resource type="Script" path="res://Scripts/Gameplay/WallController.gd" id="1_wall"]
 [ext_resource type="Script" path="res://Scripts/Gameplay/Spawner.gd" id="2_spawner"]
@@ -7,6 +7,7 @@
 [ext_resource type="Script" path="res://Scripts/UI/MobileUIOverlay.gd" id="5_mobile"]
 [ext_resource type="PackedScene" path="res://Scenes/Prefabs/ObstaclePrefab.tscn" id="6_obs"]
 [ext_resource type="PackedScene" path="res://Scenes/Prefabs/EnemyPrefab.tscn" id="7_enemy"]
+[ext_resource type="Shader" path="res://Shaders/GradientSky.gdshader" id="8_sky"]
 
 [sub_resource type="BoxMesh" id="BoxMesh_wall"]
 size = Vector3(12, 2, 0.5)
@@ -20,20 +21,96 @@ size = Vector3(100, 0.2, 40)
 [sub_resource type="BoxShape3D" id="BoxShape3D_ground"]
 size = Vector3(100, 0.2, 40)
 
+[sub_resource type="ShaderMaterial" id="ShaderMaterial_sky"]
+shader = ExtResource("8_sky")
+shader_parameter/top_color = Color(0, 0.4, 0.9, 1)
+shader_parameter/horizon_color = Color(0.4, 0.75, 1, 1)
+shader_parameter/bottom_color = Color(0.85, 0.92, 1, 1)
+shader_parameter/horizon_falloff = 1.5
+
+[sub_resource type="Sky" id="Sky_gradient"]
+sky_material = SubResource("ShaderMaterial_sky")
+
+[sub_resource type="Environment" id="Environment_main"]
+background_mode = 2
+background_energy_multiplier = 1.2
+sky = SubResource("Sky_gradient")
+ambient_light_source = 3
+ambient_light_color = Color(0.9, 0.95, 1, 1)
+ambient_light_sky_contribution = 0.5
+ambient_light_energy = 0.8
+tonemap_mode = 2
+tonemap_white = 1.2
+ssao_enabled = true
+ssao_radius = 2.0
+ssao_intensity = 1.5
+ssil_enabled = false
+sdfgi_enabled = false
+glow_enabled = true
+glow_levels/1 = 0.0
+glow_levels/2 = 1.0
+glow_levels/3 = 1.0
+glow_levels/4 = 0.5
+glow_levels/5 = 0.2
+glow_intensity = 0.8
+glow_strength = 1.2
+glow_bloom = 0.3
+glow_blend_mode = 0
+adjustment_enabled = true
+adjustment_brightness = 1.05
+adjustment_contrast = 1.1
+adjustment_saturation = 1.15
+
+[sub_resource type="StandardMaterial3D" id="Material_ground"]
+albedo_color = Color(0.25, 0.3, 0.45, 1)
+metallic = 0.0
+roughness = 0.7
+rim_enabled = true
+rim = 0.3
+rim_tint = 0.5
+
+[sub_resource type="StandardMaterial3D" id="Material_rail"]
+albedo_color = Color(0.2, 0.35, 0.6, 1)
+metallic = 0.3
+metallic_specular = 0.8
+roughness = 0.3
+rim_enabled = true
+rim = 0.5
+rim_tint = 0.7
+
+[sub_resource type="StandardMaterial3D" id="Material_wall"]
+albedo_color = Color(0.15, 0.2, 0.35, 1)
+metallic = 0.1
+roughness = 0.4
+
+[sub_resource type="BoxMesh" id="BoxMesh_rail"]
+material = SubResource("Material_rail")
+size = Vector3(0.3, 0.5, 40)
+
+[sub_resource type="BoxShape3D" id="BoxShape3D_rail"]
+size = Vector3(0.3, 0.5, 40)
+
 [sub_resource type="StyleBoxFlat" id="StyleBoxFlat_HUD"]
-bg_color = Color(0.1, 0.1, 0.15, 0.7)
-border_width_left = 2
-border_width_top = 2
-border_width_right = 2
-border_width_bottom = 2
-border_color = Color(0.4, 0.6, 0.9, 0.8)
-corner_radius_top_left = 8
-corner_radius_top_right = 8
-corner_radius_bottom_right = 8
-corner_radius_bottom_left = 8
+bg_color = Color(0.05, 0.08, 0.15, 0.85)
+border_width_left = 3
+border_width_top = 3
+border_width_right = 3
+border_width_bottom = 3
+border_color = Color(0.3, 0.6, 1, 0.9)
+corner_radius_top_left = 12
+corner_radius_top_right = 12
+corner_radius_bottom_right = 12
+corner_radius_bottom_left = 12
+shadow_size = 8
+shadow_offset = Vector2(0, 4)
 
 ; ─── Scene root ──────────────────────────────────────────────────────────────
 [node name="MainGame" type="Node3D"]
+
+; ─── World Environment ───────────────────────────────────────────────────────
+; Gradient sky, bloom, glow, SSAO, color grading
+[node name="WorldEnvironment" type="WorldEnvironment" parent="."]
+environment = SubResource("Environment_main")
 
 ; ─── Camera ──────────────────────────────────────────────────────────────────
 ; Position (0,9,-12), elevated view looking down at play field toward wall
@@ -47,9 +124,16 @@ fov = 80.0
 ; Shines from above-and-behind-camera toward the wall (bright daylight)
 [node name="DirectionalLight3D" type="DirectionalLight3D" parent="."]
 transform = Transform3D(0.866, 0, -0.5, -0.433, 0.5, -0.75, 0.25, 0.866, 0.433, 0, 10, 0)
-light_energy = 2.0
-light_color = Color(1.0, 0.98, 0.95, 1.0)
+light_energy = 1.5
+light_color = Color(1.0, 0.98, 0.92, 1.0)
 shadow_enabled = true
+shadow_bias = 0.05
+shadow_blur = 1.5
+directional_shadow_mode = 2
+directional_shadow_split_1 = 0.1
+directional_shadow_split_2 = 0.3
+directional_shadow_split_3 = 0.6
+directional_shadow_max_distance = 50.0
 
 ; ─── Ground plane ─────────────────────────────────────────────────────────────
 [node name="Ground" type="StaticBody3D" parent="."]
@@ -57,6 +141,8 @@ transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -0.1, 0)
 
 [node name="MeshInstance3D" type="MeshInstance3D" parent="Ground"]
 mesh = SubResource("BoxMesh_ground")
+surface_material_override/0 = SubResource("Material_ground")
+cast_shadow = 0
 
 [node name="CollisionShape3D" type="CollisionShape3D" parent="Ground"]
 shape = SubResource("BoxShape3D_ground")
@@ -72,9 +158,30 @@ script = ExtResource("1_wall")
 
 [node name="MeshInstance3D" type="MeshInstance3D" parent="Wall"]
 mesh = SubResource("BoxMesh_wall")
+surface_material_override/0 = SubResource("Material_wall")
 
 [node name="CollisionShape3D" type="CollisionShape3D" parent="Wall"]
 shape = SubResource("BoxShape3D_wall")
+
+; ─── Side Rails ──────────────────────────────────────────────────────────────
+; Visual guides showing the playfield boundaries (like in reference image)
+[node name="LeftRail" type="StaticBody3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -6, 0.15, 0)
+
+[node name="MeshInstance3D" type="MeshInstance3D" parent="LeftRail"]
+mesh = SubResource("BoxMesh_rail")
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="LeftRail"]
+shape = SubResource("BoxShape3D_rail")
+
+[node name="RightRail" type="StaticBody3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 6, 0.15, 0)
+
+[node name="MeshInstance3D" type="MeshInstance3D" parent="RightRail"]
+mesh = SubResource("BoxMesh_rail")
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="RightRail"]
+shape = SubResource("BoxShape3D_rail")
 
 ; ─── Spawner ──────────────────────────────────────────────────────────────────
 ; Uses ObjectPool (autoload) for cube instances.
