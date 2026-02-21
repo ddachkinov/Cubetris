@@ -18,14 +18,14 @@ extends Node3D
 @export var special_cube_chance: float = 0.0
 
 @export var cube_colors: Array[Color] = [
-	Color(1.0, 0.0, 0.2),   # VIVID hot red
-	Color(0.0, 0.5, 1.0),   # VIVID electric blue
-	Color(0.0, 1.0, 0.2),   # VIVID neon green
-	Color(1.0, 0.9, 0.0),   # VIVID golden yellow
-	Color(1.0, 0.0, 0.8),   # VIVID magenta pink
-	Color(0.0, 1.0, 1.0),   # VIVID cyan
-	Color(1.0, 0.4, 0.0),   # VIVID orange
-	Color(0.6, 0.0, 1.0),   # VIVID purple
+	Color(1.0,  0.0,  0.0,  1.0),  # Pure Red      #FF0000
+	Color(1.0,  0.65, 0.0,  1.0),  # Orange        #FFA600
+	Color(1.0,  0.98, 0.0,  1.0),  # Yellow        #FFFB00
+	Color(0.12, 1.0,  0.0,  1.0),  # Neon Green    #1EFF00
+	Color(0.0,  1.0,  1.0,  1.0),  # Cyan          #00FFFF
+	Color(0.0,  0.4,  1.0,  1.0),  # Blue          #0066FF
+	Color(1.0,  0.0,  1.0,  1.0),  # Magenta       #FF00FF
+	Color(0.6,  0.0,  1.0,  1.0),  # Purple        #9900FF
 ]
 
 # ---------------------------------------------------------------------------
@@ -244,14 +244,14 @@ func _update_landing_indicator() -> void:
 			_landing_indicator.visible = false
 		return
 
-	# Raycast from current cube position forward to find landing position
+	# Raycast from spawn point forward (not from cube itself — avoids self-hit)
 	var space_state: PhysicsDirectSpaceState3D = get_world_3d().direct_space_state
 	var x_pos: float = current_cube.global_position.x
 	var ray_from: Vector3 = Vector3(x_pos, 0.5, spawn_z)
-	var ray_to: Vector3 = Vector3(x_pos, 0.5, 10.0)  # Wall at Z=10
+	var ray_to: Vector3   = Vector3(x_pos, 0.5, 10.5)  # Past wall
 
 	var query := PhysicsRayQueryParameters3D.create(ray_from, ray_to)
-	query.exclude = [current_cube]
+	query.exclude = [current_cube.get_rid()]  # Correct RID exclusion
 	query.collision_mask = 1
 
 	var result: Dictionary = space_state.intersect_ray(query)

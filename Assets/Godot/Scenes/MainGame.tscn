@@ -24,43 +24,21 @@ size = Vector3(100, 0.2, 40)
 
 [sub_resource type="ShaderMaterial" id="ShaderMaterial_sky"]
 shader = ExtResource("8_sky")
-shader_parameter/top_color = Color(0, 0.4, 0.9, 1)
-shader_parameter/horizon_color = Color(0.4, 0.75, 1, 1)
-shader_parameter/bottom_color = Color(0.85, 0.92, 1, 1)
-shader_parameter/horizon_falloff = 1.5
+shader_parameter/top_color = Color(0.03, 0.51, 0.94, 1.0)
+shader_parameter/horizon_color = Color(0.38, 0.81, 0.96, 1.0)
+shader_parameter/bottom_color = Color(0.98, 0.99, 1.0, 1.0)
+shader_parameter/horizon_falloff = 1.2
 
 [sub_resource type="Sky" id="Sky_gradient"]
 sky_material = SubResource("ShaderMaterial_sky")
 
 [sub_resource type="Environment" id="Environment_main"]
 background_mode = 2
-background_energy_multiplier = 1.2
+background_energy_multiplier = 1.0
 sky = SubResource("Sky_gradient")
-ambient_light_source = 3
-ambient_light_color = Color(0.9, 0.95, 1, 1)
-ambient_light_sky_contribution = 0.5
-ambient_light_energy = 0.8
-tonemap_mode = 2
-tonemap_white = 1.2
-ssao_enabled = true
-ssao_radius = 2.0
-ssao_intensity = 1.5
-ssil_enabled = false
-sdfgi_enabled = false
-glow_enabled = true
-glow_levels/1 = 0.0
-glow_levels/2 = 1.0
-glow_levels/3 = 1.0
-glow_levels/4 = 0.5
-glow_levels/5 = 0.2
-glow_intensity = 0.8
-glow_strength = 1.2
-glow_bloom = 0.3
-glow_blend_mode = 0
-adjustment_enabled = true
-adjustment_brightness = 1.05
-adjustment_contrast = 1.1
-adjustment_saturation = 1.15
+ambient_light_source = 2
+ambient_light_color = Color(0.95, 0.97, 1, 1)
+ambient_light_energy = 1.0
 
 [sub_resource type="StandardMaterial3D" id="Material_ground"]
 albedo_color = Color(0.25, 0.3, 0.45, 1)
@@ -278,6 +256,7 @@ stretch = true
 
 [node name="SubViewport" type="SubViewport" parent="UIManager/HUDPanel/MarginContainer/VBoxContainer/NextCubePreview"]
 transparent_bg = true
+own_world_3d = true
 size = Vector2i(80, 80)
 render_target_update_mode = 4
 script = ExtResource("9_preview")

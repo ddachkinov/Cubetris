@@ -59,36 +59,36 @@ func _physics_process(delta: float) -> void:
 # Rail-based travel
 # ---------------------------------------------------------------------------
 func _travel_on_rail(delta: float) -> void:
-	# Raycast forward to detect obstacles (cubes or wall) for stacking
+	# Raycast forward from slightly ahead of current position to avoid self-hit
 	var space_state: PhysicsDirectSpaceState3D = get_world_3d().direct_space_state
-	var ray_from: Vector3 = global_position
-	var ray_to: Vector3 = Vector3(_locked_x, _locked_y, 10.0)  # Wall at Z=10
+	# Start ray 0.6 units AHEAD so it never intersects our own box (half-size = 0.5)
+	var ray_from: Vector3 = Vector3(_locked_x, _locked_y, global_position.z + 0.6)
+	var ray_to:   Vector3 = Vector3(_locked_x, _locked_y, 10.5)  # Slightly past wall
 
 	var query := PhysicsRayQueryParameters3D.create(ray_from, ray_to)
-	query.exclude = [self]  # Don't hit ourselves
-	query.collision_mask = 1  # Default physics layer
+	query.exclude = [get_rid()]  # Correct: pass RID, not the Object
+	query.collision_mask = 1
 
 	var result: Dictionary = space_state.intersect_ray(query)
 
-	# Determine target Z based on raycast
+	# Determine target Z based on raycast (only update if valid result ahead of us)
 	if result:
-		# Hit something - stop 1 unit before it (cube size = 1)
 		var hit_z: float = result.position.z
-		_target_z = hit_z - 1.0
-	else:
-		# Nothing in the way - travel to wall
-		_target_z = 9.0  # 1 unit before wall at Z=10
+		# Stop so our front face (current_z + 0.5) touches the back face of obstacle
+		var desired_z: float = hit_z - 1.0
+		# Only use if it's actually ahead of us
+		if desired_z > global_position.z:
+			_target_z = desired_z
+		# else keep existing _target_z (already set in on_launched)
+	# else: keep _target_z = 9.0 (wall face)
 
 	# Move toward target Z
 	var next_z: float = global_position.z + _travel_speed * delta
 
-	# Check if we've reached or passed the target
 	if next_z >= _target_z:
-		# Snap to exact landing position
 		global_position = Vector3(_locked_x, _locked_y, _target_z)
 		_stop_traveling()
 	else:
-		# Keep moving on rail, locked to track X/Y
 		global_position = Vector3(_locked_x, _locked_y, next_z)
 
 
@@ -225,10 +225,8 @@ func _apply_color(color: Color) -> void:
 	mat.rim = 0.6
 	mat.rim_tint = 0.8
 
-	# Slight emission for vibrant glow
-	mat.emission_enabled = true
-	mat.emission = color
-	mat.emission_energy_multiplier = 0.15
+	# No emission — direct light + rim gives enough pop without blowout
+	mat.emission_enabled = false
 
 	# Enable shadows
 	mat.shading_mode = BaseMaterial3D.SHADING_MODE_PER_PIXEL

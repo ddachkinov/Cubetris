@@ -3,10 +3,11 @@ shader_type sky;
 // Gradient sky shader - creates smooth blue to white gradient
 // Based on view direction (EYEDIR.y)
 
-uniform vec4 top_color : source_color = vec4(0.0, 0.3, 0.8, 1.0);      // Deep blue at zenith
-uniform vec4 horizon_color : source_color = vec4(0.6, 0.85, 1.0, 1.0); // Cyan at horizon
-uniform vec4 bottom_color : source_color = vec4(0.9, 0.95, 1.0, 1.0);  // Near-white below horizon
-uniform float horizon_falloff : hint_range(0.1, 5.0) = 2.0;
+// Research-based "Perfect Sky" palette: #0082F0 → #62cff4 → #FEFEFF
+uniform vec4 top_color : source_color = vec4(0.03, 0.51, 0.94, 1.0);   // #0082F0 deep sky blue
+uniform vec4 horizon_color : source_color = vec4(0.38, 0.81, 0.96, 1.0); // #62cff4 bright cyan
+uniform vec4 bottom_color : source_color = vec4(0.98, 0.99, 1.0, 1.0);  // #FEFEFF bright white
+uniform float horizon_falloff : hint_range(0.1, 5.0) = 1.2;
 
 void sky() {
 	// EYEDIR.y ranges from -1 (looking down) to +1 (looking up)
