@@ -36,6 +36,10 @@ func _ready() -> void:
 	if explosion_sound:
 		_audio_player.stream = explosion_sound
 
+	# Load particle scene if not assigned
+	if sparkle_scene == null:
+		sparkle_scene = load("res://Scenes/Effects/ExplosionParticles.tscn")
+
 
 # ---------------------------------------------------------------------------
 # Public API
