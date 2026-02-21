@@ -59,30 +59,8 @@ func _physics_process(delta: float) -> void:
 # Rail-based travel
 # ---------------------------------------------------------------------------
 func _travel_on_rail(delta: float) -> void:
-	# Raycast forward from slightly ahead of current position to avoid self-hit
-	var space_state: PhysicsDirectSpaceState3D = get_world_3d().direct_space_state
-	# Start ray 0.6 units AHEAD so it never intersects our own box (half-size = 0.5)
-	var ray_from: Vector3 = Vector3(_locked_x, _locked_y, global_position.z + 0.6)
-	var ray_to:   Vector3 = Vector3(_locked_x, _locked_y, 10.5)  # Slightly past wall
-
-	var query := PhysicsRayQueryParameters3D.create(ray_from, ray_to)
-	query.exclude = [get_rid()]  # Correct: pass RID, not the Object
-	query.collision_mask = 1
-
-	var result: Dictionary = space_state.intersect_ray(query)
-
-	# Determine target Z based on raycast (only update if valid result ahead of us)
-	if result:
-		var hit_z: float = result.position.z
-		# Stop so our front face (current_z + 0.5) touches the back face of obstacle
-		var desired_z: float = hit_z - 1.0
-		# Only use if it's actually ahead of us
-		if desired_z > global_position.z:
-			_target_z = desired_z
-		# else keep existing _target_z (already set in on_launched)
-	# else: keep _target_z = 9.0 (wall face)
-
-	# Move toward target Z
+	# _target_z is computed ONCE in on_launched() — no per-frame raycast needed.
+	# This ensures the cube always reaches exactly the same position the ghost shows.
 	var next_z: float = global_position.z + _travel_speed * delta
 
 	if next_z >= _target_z:
@@ -112,7 +90,7 @@ func set_kinematic(kinematic: bool) -> void:
 		angular_velocity = Vector3.ZERO
 
 
-func on_launched() -> void:
+func on_launched(target_z: float) -> void:
 	is_launched  = true
 	is_traveling = true
 	is_at_rest   = false
@@ -121,6 +99,9 @@ func on_launched() -> void:
 	# Lock X and Y to current track position
 	_locked_x = global_position.x
 	_locked_y = global_position.y
+
+	# Store the exact target computed by Spawner ghost indicator (single source of truth)
+	_target_z = target_z
 
 	# Stay frozen (kinematic) during rail travel
 	freeze = true
@@ -176,11 +157,12 @@ func _set_at_rest() -> void:
 # Grid
 # ---------------------------------------------------------------------------
 func _snap_to_grid() -> void:
-	# Snap to grid - X rounded, Y at ground level, Z from stacking logic
+	# X snapped to integer track, Y fixed at ground level, Z = exact _target_z (no rounding)
+	# This guarantees the cube lands at precisely the same Z the ghost indicator showed.
 	var snapped := Vector3(
 		roundf(global_position.x),
-		0.5,                    # Fixed Y - on top of ground
-		roundf(global_position.z)  # Z rounded to nearest unit (stacking layers)
+		0.5,
+		_target_z   # Exact value — no roundf drift
 	)
 	global_position = snapped
 	grid_position   = MatchDetector.world_to_grid(snapped)

@@ -38,12 +38,12 @@ background_energy_multiplier = 1.0
 sky = SubResource("Sky_gradient")
 ambient_light_source = 2
 ambient_light_color = Color(0.95, 0.97, 1, 1)
-ambient_light_energy = 1.0
+ambient_light_energy = 1.5
 
 [sub_resource type="StandardMaterial3D" id="Material_ground"]
-albedo_color = Color(0.25, 0.3, 0.45, 1)
+albedo_color = Color(0.55, 0.65, 0.78, 1)
 metallic = 0.0
-roughness = 0.7
+roughness = 0.6
 rim_enabled = true
 rim = 0.3
 rim_tint = 0.5
@@ -58,7 +58,7 @@ rim = 0.5
 rim_tint = 0.7
 
 [sub_resource type="StandardMaterial3D" id="Material_wall"]
-albedo_color = Color(0.15, 0.2, 0.35, 1)
+albedo_color = Color(0.35, 0.45, 0.65, 1)
 metallic = 0.1
 roughness = 0.4
 
@@ -113,7 +113,7 @@ fov = 80.0
 ; Shines from above-and-behind-camera toward the wall (bright daylight)
 [node name="DirectionalLight3D" type="DirectionalLight3D" parent="."]
 transform = Transform3D(0.866, 0, -0.5, -0.433, 0.5, -0.75, 0.25, 0.866, 0.433, 0, 10, 0)
-light_energy = 1.5
+light_energy = 2.5
 light_color = Color(1.0, 0.98, 0.92, 1.0)
 shadow_enabled = true
 shadow_bias = 0.05

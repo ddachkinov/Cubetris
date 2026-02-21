@@ -37,6 +37,7 @@ var next_cube_color: int = 0         # Index into cube_colors
 var _is_spawning: bool = false
 var _spawn_timer: float = 0.0
 var _landing_indicator: MeshInstance3D = null  # Ghost cube showing landing position
+var _computed_target_z: float = 9.0             # Target Z computed by ghost indicator (single source of truth)
 
 # ---------------------------------------------------------------------------
 # Built-ins
@@ -130,7 +131,7 @@ func _launch_cube() -> void:
 
 	var ctrl := current_cube as CubeController
 	if ctrl:
-		ctrl.on_launched()  # Starts rail-based travel (no velocity needed)
+		ctrl.on_launched(_computed_target_z)  # Pass exact target computed by ghost indicator
 
 	current_cube = null
 
@@ -260,6 +261,9 @@ func _update_landing_indicator() -> void:
 	if result:
 		# Hit something - land 1 unit before it
 		target_z = result.position.z - 1.0
+
+	# Cache for _launch_cube() — single source of truth for landing position
+	_computed_target_z = target_z
 
 	_landing_indicator.global_position = Vector3(x_pos, 0.5, target_z)
 	_landing_indicator.visible = true
