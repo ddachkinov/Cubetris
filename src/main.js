@@ -5,12 +5,13 @@ const GRID_COLS = 7;
 const GRID_ROWS = 12;
 const CUBE_SIZE = 1;
 const GAP = 0.05;
-const CELL = CUBE_SIZE + GAP;
-const SHOOT_SPEED = 20;
-const WALL_ADVANCE_INTERVAL_START = 15; // seconds
+const COL_CELL = CUBE_SIZE + GAP; // column spacing (left-right)
+const FIELD_DEPTH = 25; // 25 meters from player to back wall
+const DEPTH_CELL = FIELD_DEPTH / GRID_ROWS; // ~2.08m per row slot
+const SHOOT_SPEED = 30; // faster to cover 25m
+const WALL_ADVANCE_INTERVAL_START = 15;
 const WALL_ADVANCE_INTERVAL_MIN = 5;
-const WALL_ADVANCE_SPEEDUP = 0.5; // seconds faster each advance
-const GRID_TILT = -0.22; // radians — tilts the playing field back for depth
+const WALL_ADVANCE_SPEEDUP = 0.5;
 const COLORS = [
   0xff4444, // red
   0x44bb44, // green
@@ -21,7 +22,7 @@ const COLORS = [
 const COLOR_NAMES = ['#ff4444', '#44bb44', '#4488ff', '#ffcc00', '#ff66ff'];
 
 // ─── State ───────────────────────────────────────────────────────────────────
-let grid = []; // grid[col][row] = { mesh, colorIndex } | null
+let grid = [];
 let currentCol = Math.floor(GRID_COLS / 2);
 let currentColorIndex = randomColorIndex();
 let nextColorIndex = randomColorIndex();
@@ -42,96 +43,173 @@ const nextColorBox = document.getElementById('next-color-box');
 
 // ─── Three.js setup ─────────────────────────────────────────────────────────
 const scene = new THREE.Scene();
-scene.background = new THREE.Color(0x1a1a2e);
+scene.background = new THREE.Color(0x0a0a1a);
+scene.fog = new THREE.Fog(0x0a0a1a, 12, 32); // fog fades distant cubes
 
-const gridWidth = GRID_COLS * CELL;
-const gridHeight = GRID_ROWS * CELL;
-const centerX = gridWidth / 2 - CELL / 2;
-const centerY = gridHeight / 2 - CELL / 2;
+const gridWidth = GRID_COLS * COL_CELL;
+const centerX = gridWidth / 2 - COL_CELL / 2;
 
-const camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.1, 100);
-camera.position.set(centerX, -3, 16);
-camera.lookAt(centerX, centerY + 2, -3);
+// Perspective camera — eye-level, standing right behind the spawn cube
+const camera = new THREE.PerspectiveCamera(
+  60, // wider FOV for dramatic perspective
+  window.innerWidth / window.innerHeight,
+  0.1,
+  50
+);
+camera.position.set(centerX, 0.75, -2.5); // eye level, a step back from spawn
+camera.lookAt(centerX, 0.3, FIELD_DEPTH * 0.45); // gaze slightly down the corridor
 
 const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 document.body.insertBefore(renderer.domElement, document.getElementById('ui'));
 
-// Lighting
-const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
+// ─── Lighting ────────────────────────────────────────────────────────────────
+const ambientLight = new THREE.AmbientLight(0x8888cc, 0.4);
 scene.add(ambientLight);
-const dirLight = new THREE.DirectionalLight(0xffffff, 0.8);
-dirLight.position.set(5, 10, 10);
-scene.add(dirLight);
 
-// ─── Game group (tilted for perspective — wall recedes into distance) ────────
+// Main light from above-front to cast shadows down the corridor
+const dirLight = new THREE.DirectionalLight(0xffffff, 1.0);
+dirLight.position.set(centerX, 8, -2);
+dirLight.target.position.set(centerX, 0, FIELD_DEPTH / 2);
+scene.add(dirLight);
+scene.add(dirLight.target);
+
+// Subtle fill light from the far wall (cool tone)
+const backLight = new THREE.PointLight(0x4466ff, 0.6, 35);
+backLight.position.set(centerX, 2, FIELD_DEPTH + 2);
+scene.add(backLight);
+
+// ─── Game group (no tilt needed — perspective does the work) ─────────────────
 const gameGroup = new THREE.Group();
-gameGroup.rotation.x = GRID_TILT;
 scene.add(gameGroup);
 
-// ─── Grid visual (floor lines) ──────────────────────────────────────────────
-function createGridVisual() {
-  const material = new THREE.LineBasicMaterial({ color: 0x333355 });
+// ─── Coordinate mapping ─────────────────────────────────────────────────────
+// Columns → X axis (left-right)
+// Rows → Z axis (depth — row 0 is near player, row 11 is at the far wall)
+// Y axis → vertical height (cubes sit on the ground)
 
-  // Vertical lines
-  for (let c = 0; c <= GRID_COLS; c++) {
-    const x = c * CELL - CELL / 2 - GAP / 2;
-    const points = [
-      new THREE.Vector3(x, -CELL / 2 - GAP / 2, -0.5),
-      new THREE.Vector3(x, GRID_ROWS * CELL - CELL / 2 - GAP / 2, -0.5),
-    ];
-    const geo = new THREE.BufferGeometry().setFromPoints(points);
-    gameGroup.add(new THREE.Line(geo, material));
-  }
-
-  // Horizontal lines
-  for (let r = 0; r <= GRID_ROWS; r++) {
-    const y = r * CELL - CELL / 2 - GAP / 2;
-    const points = [
-      new THREE.Vector3(-CELL / 2 - GAP / 2, y, -0.5),
-      new THREE.Vector3(GRID_COLS * CELL - CELL / 2 - GAP / 2, y, -0.5),
-    ];
-    const geo = new THREE.BufferGeometry().setFromPoints(points);
-    gameGroup.add(new THREE.Line(geo, material));
-  }
-
-  // Back wall indicator (the far wall where cubes stack)
-  const wallMat = new THREE.LineBasicMaterial({ color: 0xff4444, linewidth: 2 });
-  const wallY = (GRID_ROWS - 1) * CELL + CELL / 2 + GAP / 2;
-  const wallPoints = [
-    new THREE.Vector3(-CELL / 2 - GAP / 2, wallY, -0.5),
-    new THREE.Vector3(GRID_COLS * CELL - CELL / 2 - GAP / 2, wallY, -0.5),
-  ];
-  const wallGeo = new THREE.BufferGeometry().setFromPoints(wallPoints);
-  gameGroup.add(new THREE.Line(wallGeo, wallMat));
+function colToX(col) {
+  return col * COL_CELL;
 }
 
-// ─── Column highlight ────────────────────────────────────────────────────────
-const highlightGeo = new THREE.PlaneGeometry(CUBE_SIZE, GRID_ROWS * CELL + CELL * 3);
+function rowToZ(row) {
+  return row * DEPTH_CELL;
+}
+
+// ─── Ground plane ────────────────────────────────────────────────────────────
+function createGroundPlane() {
+  const groundGeo = new THREE.PlaneGeometry(gridWidth + 4, FIELD_DEPTH + 8);
+  const groundMat = new THREE.MeshLambertMaterial({ color: 0x111122 });
+  const ground = new THREE.Mesh(groundGeo, groundMat);
+  ground.rotation.x = -Math.PI / 2;
+  ground.position.set(centerX, -CUBE_SIZE / 2, FIELD_DEPTH / 2 - 1);
+  gameGroup.add(ground);
+}
+
+// ─── Grid visual (floor lines — perspective convergence) ─────────────────────
+function createGridVisual() {
+  const material = new THREE.LineBasicMaterial({ color: 0x222244 });
+  const brightMat = new THREE.LineBasicMaterial({ color: 0x333366 });
+  const floorY = -CUBE_SIZE / 2 + 0.01; // just above ground
+
+  // Lines parallel to Z (one per column boundary) — converge to vanishing point
+  for (let c = 0; c <= GRID_COLS; c++) {
+    const x = c * COL_CELL - COL_CELL / 2 - GAP / 2;
+    const points = [
+      new THREE.Vector3(x, floorY, -2),
+      new THREE.Vector3(x, floorY, FIELD_DEPTH + 1),
+    ];
+    const geo = new THREE.BufferGeometry().setFromPoints(points);
+    gameGroup.add(new THREE.Line(geo, material));
+  }
+
+  // Lines parallel to X (one per row boundary) — horizontal rungs
+  for (let r = 0; r <= GRID_ROWS; r++) {
+    const z = r * DEPTH_CELL - DEPTH_CELL / 2 - GAP / 2;
+    const points = [
+      new THREE.Vector3(-COL_CELL / 2 - GAP / 2, floorY, z),
+      new THREE.Vector3(GRID_COLS * COL_CELL - COL_CELL / 2 - GAP / 2, floorY, z),
+    ];
+    const geo = new THREE.BufferGeometry().setFromPoints(points);
+    gameGroup.add(new THREE.Line(geo, material));
+  }
+
+  // Side walls (subtle vertical planes for corridor feel)
+  const wallMat = new THREE.LineBasicMaterial({ color: 0x222244 });
+  const leftX = -COL_CELL / 2 - GAP / 2;
+  const rightX = GRID_COLS * COL_CELL - COL_CELL / 2 - GAP / 2;
+  const wallHeight = CUBE_SIZE * 2;
+
+  [leftX, rightX].forEach((x) => {
+    // Vertical lines along the side walls
+    for (let r = 0; r <= GRID_ROWS; r += 2) {
+      const z = r * DEPTH_CELL;
+      const pts = [
+        new THREE.Vector3(x, floorY, z),
+        new THREE.Vector3(x, floorY + wallHeight, z),
+      ];
+      const geo = new THREE.BufferGeometry().setFromPoints(pts);
+      gameGroup.add(new THREE.Line(geo, wallMat));
+    }
+    // Horizontal edge along top of side walls
+    const topPts = [
+      new THREE.Vector3(x, floorY + wallHeight, -2),
+      new THREE.Vector3(x, floorY + wallHeight, FIELD_DEPTH + 1),
+    ];
+    const topGeo = new THREE.BufferGeometry().setFromPoints(topPts);
+    gameGroup.add(new THREE.Line(topGeo, wallMat));
+  });
+
+  // Back wall indicator — glowing red line at the far wall
+  const wallIndicatorMat = new THREE.LineBasicMaterial({ color: 0xff2222 });
+  const wallZ = (GRID_ROWS - 1) * DEPTH_CELL + DEPTH_CELL / 2 + GAP / 2;
+  const wallPts = [
+    new THREE.Vector3(leftX, floorY, wallZ),
+    new THREE.Vector3(rightX, floorY, wallZ),
+  ];
+  const wallGeo = new THREE.BufferGeometry().setFromPoints(wallPts);
+  gameGroup.add(new THREE.Line(wallGeo, wallIndicatorMat));
+
+  // Back wall vertical line
+  const wallVertPts = [
+    new THREE.Vector3(leftX, floorY, wallZ),
+    new THREE.Vector3(leftX, floorY + wallHeight, wallZ),
+    new THREE.Vector3(rightX, floorY + wallHeight, wallZ),
+    new THREE.Vector3(rightX, floorY, wallZ),
+  ];
+  const wallVertGeo = new THREE.BufferGeometry().setFromPoints(wallVertPts);
+  gameGroup.add(new THREE.Line(wallVertGeo, wallIndicatorMat));
+}
+
+// ─── Column highlight (a strip on the ground going into the distance) ────────
+const highlightGeo = new THREE.PlaneGeometry(CUBE_SIZE, FIELD_DEPTH + 4);
 const highlightMat = new THREE.MeshBasicMaterial({
   color: 0xffffff,
   transparent: true,
-  opacity: 0.04,
+  opacity: 0.03,
 });
 const columnHighlight = new THREE.Mesh(highlightGeo, highlightMat);
-columnHighlight.position.z = -0.4;
+columnHighlight.rotation.x = -Math.PI / 2;
+columnHighlight.position.y = -CUBE_SIZE / 2 + 0.02;
+columnHighlight.position.z = FIELD_DEPTH / 2;
 gameGroup.add(columnHighlight);
 
 function updateColumnHighlight() {
-  columnHighlight.position.x = currentCol * CELL;
-  columnHighlight.position.y = (GRID_ROWS * CELL) / 2 - CELL * 1.5;
+  columnHighlight.position.x = currentCol * COL_CELL;
 }
 
-// ─── Spawn-point cube (preview at bottom) ────────────────────────────────────
+// ─── Spawn-point cube (right in front of the player — big and close) ─────────
 const spawnGeo = new THREE.BoxGeometry(CUBE_SIZE * 0.9, CUBE_SIZE * 0.9, CUBE_SIZE * 0.9);
 const spawnMat = new THREE.MeshLambertMaterial({ color: COLORS[currentColorIndex] });
 const spawnCube = new THREE.Mesh(spawnGeo, spawnMat);
-spawnCube.position.y = -CELL * 1.5;
+spawnCube.position.set(currentCol * COL_CELL, 0, -1); // just in front of camera
 gameGroup.add(spawnCube);
 
 function updateSpawnCube() {
-  spawnCube.position.x = currentCol * CELL;
+  spawnCube.position.x = currentCol * COL_CELL;
   spawnMat.color.setHex(COLORS[currentColorIndex]);
 }
 
@@ -140,19 +218,10 @@ function randomColorIndex() {
   return Math.floor(Math.random() * COLORS.length);
 }
 
-function colToX(col) {
-  return col * CELL;
-}
-
-function rowToY(row) {
-  return row * CELL;
-}
-
 function createCubeMesh(colorIndex) {
   const geo = new THREE.BoxGeometry(CUBE_SIZE * 0.9, CUBE_SIZE * 0.9, CUBE_SIZE * 0.9);
   const mat = new THREE.MeshLambertMaterial({ color: COLORS[colorIndex] });
-  const mesh = new THREE.Mesh(geo, mat);
-  return mesh;
+  return new THREE.Mesh(geo, mat);
 }
 
 // ─── Grid logic ──────────────────────────────────────────────────────────────
@@ -169,7 +238,7 @@ function initGrid() {
 function placeCube(col, row, colorIndex) {
   if (row < 0 || row >= GRID_ROWS) return null;
   const mesh = createCubeMesh(colorIndex);
-  mesh.position.set(colToX(col), rowToY(row), 0);
+  mesh.position.set(colToX(col), 0, rowToZ(row));
   gameGroup.add(mesh);
   grid[col][row] = { mesh, colorIndex };
   return grid[col][row];
@@ -185,17 +254,15 @@ function removeCube(col, row) {
 }
 
 function landingRow(col) {
-  // Cubes stack against the wall (top). Find the lowest occupied row,
-  // then land one row below it. If column is empty, land at the top.
   for (let r = 0; r < GRID_ROWS; r++) {
     if (grid[col][r]) {
-      return r - 1; // one below the lowest cube in the stack
+      return r - 1;
     }
   }
-  return GRID_ROWS - 1; // empty column — land at the wall
+  return GRID_ROWS - 1;
 }
 
-// ─── Adjacency detection (flood fill for same color) ─────────────────────────
+// ─── Adjacency detection ─────────────────────────────────────────────────────
 function findMatchGroup(col, row) {
   const cell = grid[col][row];
   if (!cell) return [];
@@ -227,14 +294,14 @@ function findMatchGroup(col, row) {
 // ─── Particle explosion ─────────────────────────────────────────────────────
 function spawnParticles(col, row, colorIndex) {
   const cx = colToX(col);
-  const cy = rowToY(row);
+  const cz = rowToZ(row);
   const count = 12;
   for (let i = 0; i < count; i++) {
     const size = 0.1 + Math.random() * 0.15;
     const geo = new THREE.BoxGeometry(size, size, size);
     const mat = new THREE.MeshLambertMaterial({ color: COLORS[colorIndex] });
     const mesh = new THREE.Mesh(geo, mat);
-    mesh.position.set(cx, cy, 0);
+    mesh.position.set(cx, 0, cz);
     gameGroup.add(mesh);
 
     const angle = (Math.PI * 2 * i) / count + Math.random() * 0.3;
@@ -242,8 +309,8 @@ function spawnParticles(col, row, colorIndex) {
     particles.push({
       mesh,
       vx: Math.cos(angle) * speed,
-      vy: Math.sin(angle) * speed,
-      vz: (Math.random() - 0.5) * speed,
+      vy: Math.abs(Math.sin(angle)) * speed * 0.7 + 1, // bias upward
+      vz: Math.sin(angle) * speed * 0.5,
       life: 0.6 + Math.random() * 0.4,
     });
   }
@@ -255,7 +322,7 @@ function updateParticles(dt) {
     p.mesh.position.x += p.vx * dt;
     p.mesh.position.y += p.vy * dt;
     p.mesh.position.z += p.vz * dt;
-    p.vy -= 9.8 * dt;
+    p.vy -= 9.8 * dt; // gravity pulls them down
     p.life -= dt;
     p.mesh.scale.setScalar(Math.max(0, p.life));
 
@@ -268,7 +335,7 @@ function updateParticles(dt) {
   }
 }
 
-// ─── Gravity (cubes float up toward the wall after matches) ──────────────────
+// ─── Gravity (cubes slide toward the wall after matches) ─────────────────────
 function applyGravity() {
   for (let c = 0; c < GRID_COLS; c++) {
     let writeRow = GRID_ROWS - 1;
@@ -277,7 +344,7 @@ function applyGravity() {
         if (r !== writeRow) {
           grid[c][writeRow] = grid[c][r];
           grid[c][r] = null;
-          grid[c][writeRow].mesh.position.y = rowToY(writeRow);
+          grid[c][writeRow].mesh.position.z = rowToZ(writeRow);
         }
         writeRow--;
       }
@@ -285,7 +352,7 @@ function applyGravity() {
   }
 }
 
-// ─── Chain-check: after gravity, check for new matches ───────────────────────
+// ─── Chain-check ─────────────────────────────────────────────────────────────
 function resolveMatches() {
   let totalCleared = 0;
   let changed = true;
@@ -322,15 +389,15 @@ function resolveMatches() {
   return totalCleared;
 }
 
-// ─── Shooting ────────────────────────────────────────────────────────────────
+// ─── Shooting (cube flies forward into the corridor) ─────────────────────────
 function shoot() {
   if (gameOver || shootingCube) return;
 
   const row = landingRow(currentCol);
-  if (row < 0) return; // column full
+  if (row < 0) return;
 
   const mesh = createCubeMesh(currentColorIndex);
-  mesh.position.set(colToX(currentCol), spawnCube.position.y, 0);
+  mesh.position.set(colToX(currentCol), 0, spawnCube.position.z);
   gameGroup.add(mesh);
 
   shootingCube = {
@@ -341,7 +408,6 @@ function shoot() {
   };
   shootingVelocity = SHOOT_SPEED;
 
-  // Advance colors
   currentColorIndex = nextColorIndex;
   nextColorIndex = randomColorIndex();
   updateSpawnCube();
@@ -351,13 +417,12 @@ function shoot() {
 function updateShooting(dt) {
   if (!shootingCube) return;
 
-  const targetY = rowToY(shootingCube.targetRow);
-  shootingCube.mesh.position.y += shootingVelocity * dt;
+  const targetZ = rowToZ(shootingCube.targetRow);
+  shootingCube.mesh.position.z += shootingVelocity * dt;
 
-  if (shootingCube.mesh.position.y >= targetY) {
-    shootingCube.mesh.position.y = targetY;
+  if (shootingCube.mesh.position.z >= targetZ) {
+    shootingCube.mesh.position.z = targetZ;
 
-    // Place in grid
     gameGroup.remove(shootingCube.mesh);
     shootingCube.mesh.geometry.dispose();
     shootingCube.mesh.material.dispose();
@@ -377,9 +442,8 @@ function updateShooting(dt) {
   }
 }
 
-// ─── Wall advancement (wall pushes down toward the player) ───────────────────
+// ─── Wall advancement (wall pushes toward the player) ────────────────────────
 function advanceWall() {
-  // Check if any column has a cube at row 0 — can't shift down
   for (let c = 0; c < GRID_COLS; c++) {
     if (grid[c][0]) {
       triggerGameOver();
@@ -387,31 +451,27 @@ function advanceWall() {
     }
   }
 
-  // Shift everything down by one row
   for (let c = 0; c < GRID_COLS; c++) {
     for (let r = 0; r < GRID_ROWS - 1; r++) {
       grid[c][r] = grid[c][r + 1];
       if (grid[c][r]) {
-        grid[c][r].mesh.position.y = rowToY(r);
+        grid[c][r].mesh.position.z = rowToZ(r);
       }
     }
     grid[c][GRID_ROWS - 1] = null;
   }
 
-  // Add a new random row at the top (against the wall)
   for (let c = 0; c < GRID_COLS; c++) {
     const ci = randomColorIndex();
     placeCube(c, GRID_ROWS - 1, ci);
   }
 
-  // Check matches after wall advance
   const cleared = resolveMatches();
   if (cleared > 0) {
     score += cleared * 10;
     scoreEl.textContent = score;
   }
 
-  // Speed up
   wallAdvanceInterval = Math.max(WALL_ADVANCE_INTERVAL_MIN, wallAdvanceInterval - WALL_ADVANCE_SPEEDUP);
 
   checkGameOver();
@@ -434,7 +494,6 @@ function triggerGameOver() {
 }
 
 function restartGame() {
-  // Clear grid
   for (let c = 0; c < GRID_COLS; c++) {
     for (let r = 0; r < GRID_ROWS; r++) {
       if (grid[c][r]) {
@@ -446,7 +505,6 @@ function restartGame() {
     }
   }
 
-  // Clear particles
   particles.forEach((p) => {
     gameGroup.remove(p.mesh);
     p.mesh.geometry.dispose();
@@ -454,7 +512,6 @@ function restartGame() {
   });
   particles = [];
 
-  // Clear shooting cube
   if (shootingCube) {
     gameGroup.remove(shootingCube.mesh);
     shootingCube.mesh.geometry.dispose();
@@ -520,6 +577,7 @@ window.addEventListener('resize', () => {
 
 // ─── Init & Game Loop ────────────────────────────────────────────────────────
 initGrid();
+createGroundPlane();
 createGridVisual();
 updateSpawnCube();
 updateColumnHighlight();
@@ -536,7 +594,6 @@ function animate() {
     updateShooting(dt);
     updateParticles(dt);
 
-    // Wall advancement timer
     wallAdvanceTimer += dt;
     if (wallAdvanceTimer >= wallAdvanceInterval) {
       wallAdvanceTimer = 0;
