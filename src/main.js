@@ -10,6 +10,7 @@ const SHOOT_SPEED = 20;
 const WALL_ADVANCE_INTERVAL_START = 15; // seconds
 const WALL_ADVANCE_INTERVAL_MIN = 5;
 const WALL_ADVANCE_SPEEDUP = 0.5; // seconds faster each advance
+const GRID_TILT = -0.22; // radians — tilts the playing field back for depth
 const COLORS = [
   0xff4444, // red
   0x44bb44, // green
@@ -45,12 +46,12 @@ scene.background = new THREE.Color(0x1a1a2e);
 
 const gridWidth = GRID_COLS * CELL;
 const gridHeight = GRID_ROWS * CELL;
-
-const camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.1, 100);
 const centerX = gridWidth / 2 - CELL / 2;
 const centerY = gridHeight / 2 - CELL / 2;
-camera.position.set(centerX, centerY - 5, 16);
-camera.lookAt(centerX, centerY + 1, 0);
+
+const camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.1, 100);
+camera.position.set(centerX, -3, 16);
+camera.lookAt(centerX, centerY + 2, -3);
 
 const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setSize(window.innerWidth, window.innerHeight);
@@ -64,6 +65,11 @@ const dirLight = new THREE.DirectionalLight(0xffffff, 0.8);
 dirLight.position.set(5, 10, 10);
 scene.add(dirLight);
 
+// ─── Game group (tilted for perspective — wall recedes into distance) ────────
+const gameGroup = new THREE.Group();
+gameGroup.rotation.x = GRID_TILT;
+scene.add(gameGroup);
+
 // ─── Grid visual (floor lines) ──────────────────────────────────────────────
 function createGridVisual() {
   const material = new THREE.LineBasicMaterial({ color: 0x333355 });
@@ -76,7 +82,7 @@ function createGridVisual() {
       new THREE.Vector3(x, GRID_ROWS * CELL - CELL / 2 - GAP / 2, -0.5),
     ];
     const geo = new THREE.BufferGeometry().setFromPoints(points);
-    scene.add(new THREE.Line(geo, material));
+    gameGroup.add(new THREE.Line(geo, material));
   }
 
   // Horizontal lines
@@ -87,7 +93,7 @@ function createGridVisual() {
       new THREE.Vector3(GRID_COLS * CELL - CELL / 2 - GAP / 2, y, -0.5),
     ];
     const geo = new THREE.BufferGeometry().setFromPoints(points);
-    scene.add(new THREE.Line(geo, material));
+    gameGroup.add(new THREE.Line(geo, material));
   }
 
   // Back wall indicator (the far wall where cubes stack)
@@ -98,11 +104,11 @@ function createGridVisual() {
     new THREE.Vector3(GRID_COLS * CELL - CELL / 2 - GAP / 2, wallY, -0.5),
   ];
   const wallGeo = new THREE.BufferGeometry().setFromPoints(wallPoints);
-  scene.add(new THREE.Line(wallGeo, wallMat));
+  gameGroup.add(new THREE.Line(wallGeo, wallMat));
 }
 
 // ─── Column highlight ────────────────────────────────────────────────────────
-const highlightGeo = new THREE.PlaneGeometry(CUBE_SIZE, GRID_ROWS * CELL);
+const highlightGeo = new THREE.PlaneGeometry(CUBE_SIZE, GRID_ROWS * CELL + CELL * 3);
 const highlightMat = new THREE.MeshBasicMaterial({
   color: 0xffffff,
   transparent: true,
@@ -110,11 +116,11 @@ const highlightMat = new THREE.MeshBasicMaterial({
 });
 const columnHighlight = new THREE.Mesh(highlightGeo, highlightMat);
 columnHighlight.position.z = -0.4;
-scene.add(columnHighlight);
+gameGroup.add(columnHighlight);
 
 function updateColumnHighlight() {
   columnHighlight.position.x = currentCol * CELL;
-  columnHighlight.position.y = (GRID_ROWS * CELL) / 2 - CELL / 2;
+  columnHighlight.position.y = (GRID_ROWS * CELL) / 2 - CELL * 1.5;
 }
 
 // ─── Spawn-point cube (preview at bottom) ────────────────────────────────────
@@ -122,7 +128,7 @@ const spawnGeo = new THREE.BoxGeometry(CUBE_SIZE * 0.9, CUBE_SIZE * 0.9, CUBE_SI
 const spawnMat = new THREE.MeshLambertMaterial({ color: COLORS[currentColorIndex] });
 const spawnCube = new THREE.Mesh(spawnGeo, spawnMat);
 spawnCube.position.y = -CELL * 1.5;
-scene.add(spawnCube);
+gameGroup.add(spawnCube);
 
 function updateSpawnCube() {
   spawnCube.position.x = currentCol * CELL;
@@ -164,7 +170,7 @@ function placeCube(col, row, colorIndex) {
   if (row < 0 || row >= GRID_ROWS) return null;
   const mesh = createCubeMesh(colorIndex);
   mesh.position.set(colToX(col), rowToY(row), 0);
-  scene.add(mesh);
+  gameGroup.add(mesh);
   grid[col][row] = { mesh, colorIndex };
   return grid[col][row];
 }
@@ -172,7 +178,7 @@ function placeCube(col, row, colorIndex) {
 function removeCube(col, row) {
   const cell = grid[col][row];
   if (!cell) return;
-  scene.remove(cell.mesh);
+  gameGroup.remove(cell.mesh);
   cell.mesh.geometry.dispose();
   cell.mesh.material.dispose();
   grid[col][row] = null;
@@ -229,7 +235,7 @@ function spawnParticles(col, row, colorIndex) {
     const mat = new THREE.MeshLambertMaterial({ color: COLORS[colorIndex] });
     const mesh = new THREE.Mesh(geo, mat);
     mesh.position.set(cx, cy, 0);
-    scene.add(mesh);
+    gameGroup.add(mesh);
 
     const angle = (Math.PI * 2 * i) / count + Math.random() * 0.3;
     const speed = 3 + Math.random() * 4;
@@ -254,7 +260,7 @@ function updateParticles(dt) {
     p.mesh.scale.setScalar(Math.max(0, p.life));
 
     if (p.life <= 0) {
-      scene.remove(p.mesh);
+      gameGroup.remove(p.mesh);
       p.mesh.geometry.dispose();
       p.mesh.material.dispose();
       particles.splice(i, 1);
@@ -325,7 +331,7 @@ function shoot() {
 
   const mesh = createCubeMesh(currentColorIndex);
   mesh.position.set(colToX(currentCol), spawnCube.position.y, 0);
-  scene.add(mesh);
+  gameGroup.add(mesh);
 
   shootingCube = {
     mesh,
@@ -352,7 +358,7 @@ function updateShooting(dt) {
     shootingCube.mesh.position.y = targetY;
 
     // Place in grid
-    scene.remove(shootingCube.mesh);
+    gameGroup.remove(shootingCube.mesh);
     shootingCube.mesh.geometry.dispose();
     shootingCube.mesh.material.dispose();
 
@@ -432,7 +438,7 @@ function restartGame() {
   for (let c = 0; c < GRID_COLS; c++) {
     for (let r = 0; r < GRID_ROWS; r++) {
       if (grid[c][r]) {
-        scene.remove(grid[c][r].mesh);
+        gameGroup.remove(grid[c][r].mesh);
         grid[c][r].mesh.geometry.dispose();
         grid[c][r].mesh.material.dispose();
         grid[c][r] = null;
@@ -442,7 +448,7 @@ function restartGame() {
 
   // Clear particles
   particles.forEach((p) => {
-    scene.remove(p.mesh);
+    gameGroup.remove(p.mesh);
     p.mesh.geometry.dispose();
     p.mesh.material.dispose();
   });
@@ -450,7 +456,7 @@ function restartGame() {
 
   // Clear shooting cube
   if (shootingCube) {
-    scene.remove(shootingCube.mesh);
+    gameGroup.remove(shootingCube.mesh);
     shootingCube.mesh.geometry.dispose();
     shootingCube.mesh.material.dispose();
     shootingCube = null;
