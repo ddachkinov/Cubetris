@@ -549,13 +549,13 @@ window.addEventListener('keydown', (e) => {
   switch (e.code) {
     case 'ArrowLeft':
     case 'KeyA':
-      currentCol = Math.max(0, currentCol - 1);
+      currentCol = Math.min(GRID_COLS - 1, currentCol + 1);
       updateSpawnCube();
       updateColumnHighlight();
       break;
     case 'ArrowRight':
     case 'KeyD':
-      currentCol = Math.min(GRID_COLS - 1, currentCol + 1);
+      currentCol = Math.max(0, currentCol - 1);
       updateSpawnCube();
       updateColumnHighlight();
       break;
