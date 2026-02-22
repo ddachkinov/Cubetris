@@ -47,8 +47,10 @@ const gridWidth = GRID_COLS * CELL;
 const gridHeight = GRID_ROWS * CELL;
 
 const camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.1, 100);
-camera.position.set(gridWidth / 2 - CELL / 2, gridHeight / 2 - CELL / 2, 18);
-camera.lookAt(gridWidth / 2 - CELL / 2, gridHeight / 2 - CELL / 2, 0);
+const centerX = gridWidth / 2 - CELL / 2;
+const centerY = gridHeight / 2 - CELL / 2;
+camera.position.set(centerX, centerY - 5, 16);
+camera.lookAt(centerX, centerY + 1, 0);
 
 const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setSize(window.innerWidth, window.innerHeight);
@@ -176,16 +178,15 @@ function removeCube(col, row) {
   grid[col][row] = null;
 }
 
-function getTopRow(col) {
-  for (let r = GRID_ROWS - 1; r >= 0; r--) {
-    if (grid[col][r]) return r;
-  }
-  return -1;
-}
-
 function landingRow(col) {
-  const top = getTopRow(col);
-  return top + 1;
+  // Cubes stack against the wall (top). Find the lowest occupied row,
+  // then land one row below it. If column is empty, land at the top.
+  for (let r = 0; r < GRID_ROWS; r++) {
+    if (grid[col][r]) {
+      return r - 1; // one below the lowest cube in the stack
+    }
+  }
+  return GRID_ROWS - 1; // empty column — land at the wall
 }
 
 // ─── Adjacency detection (flood fill for same color) ─────────────────────────
@@ -261,18 +262,18 @@ function updateParticles(dt) {
   }
 }
 
-// ─── Gravity (cubes fall to fill gaps after matches) ─────────────────────────
+// ─── Gravity (cubes float up toward the wall after matches) ──────────────────
 function applyGravity() {
   for (let c = 0; c < GRID_COLS; c++) {
-    let writeRow = 0;
-    for (let r = 0; r < GRID_ROWS; r++) {
+    let writeRow = GRID_ROWS - 1;
+    for (let r = GRID_ROWS - 1; r >= 0; r--) {
       if (grid[c][r]) {
         if (r !== writeRow) {
           grid[c][writeRow] = grid[c][r];
           grid[c][r] = null;
           grid[c][writeRow].mesh.position.y = rowToY(writeRow);
         }
-        writeRow++;
+        writeRow--;
       }
     }
   }
@@ -320,7 +321,7 @@ function shoot() {
   if (gameOver || shootingCube) return;
 
   const row = landingRow(currentCol);
-  if (row >= GRID_ROWS) return; // column full
+  if (row < 0) return; // column full
 
   const mesh = createCubeMesh(currentColorIndex);
   mesh.position.set(colToX(currentCol), spawnCube.position.y, 0);
@@ -370,31 +371,31 @@ function updateShooting(dt) {
   }
 }
 
-// ─── Wall advancement ────────────────────────────────────────────────────────
+// ─── Wall advancement (wall pushes down toward the player) ───────────────────
 function advanceWall() {
-  // Check if any column has a cube at the top row — game over
+  // Check if any column has a cube at row 0 — can't shift down
   for (let c = 0; c < GRID_COLS; c++) {
-    if (grid[c][GRID_ROWS - 1]) {
+    if (grid[c][0]) {
       triggerGameOver();
       return;
     }
   }
 
-  // Shift everything up by one row
+  // Shift everything down by one row
   for (let c = 0; c < GRID_COLS; c++) {
-    for (let r = GRID_ROWS - 1; r > 0; r--) {
-      grid[c][r] = grid[c][r - 1];
+    for (let r = 0; r < GRID_ROWS - 1; r++) {
+      grid[c][r] = grid[c][r + 1];
       if (grid[c][r]) {
         grid[c][r].mesh.position.y = rowToY(r);
       }
     }
-    grid[c][0] = null;
+    grid[c][GRID_ROWS - 1] = null;
   }
 
-  // Add a random row at the bottom (row 0)
+  // Add a new random row at the top (against the wall)
   for (let c = 0; c < GRID_COLS; c++) {
     const ci = randomColorIndex();
-    placeCube(c, 0, ci);
+    placeCube(c, GRID_ROWS - 1, ci);
   }
 
   // Check matches after wall advance
@@ -413,7 +414,7 @@ function advanceWall() {
 // ─── Game Over ───────────────────────────────────────────────────────────────
 function checkGameOver() {
   for (let c = 0; c < GRID_COLS; c++) {
-    if (grid[c][GRID_ROWS - 1]) {
+    if (grid[c][0]) {
       triggerGameOver();
       return;
     }
