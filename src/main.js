@@ -111,8 +111,8 @@ function createGroundPlane() {
 
 // ─── Grid visual (floor lines — perspective convergence) ─────────────────────
 function createGridVisual() {
-  const material = new THREE.LineBasicMaterial({ color: 0x222244 });
-  const brightMat = new THREE.LineBasicMaterial({ color: 0x333366 });
+  const material = new THREE.LineBasicMaterial({ color: 0x444477 });
+  const brightMat = new THREE.LineBasicMaterial({ color: 0x555599 });
   const floorY = -CUBE_SIZE / 2 + 0.01; // just above ground
 
   // Lines parallel to Z (one per column boundary) — converge to vanishing point
@@ -138,7 +138,7 @@ function createGridVisual() {
   }
 
   // Side walls (subtle vertical planes for corridor feel)
-  const wallMat = new THREE.LineBasicMaterial({ color: 0x222244 });
+  const wallMat = new THREE.LineBasicMaterial({ color: 0x444477 });
   const leftX = -COL_CELL / 2 - GAP / 2;
   const rightX = GRID_COLS * COL_CELL - COL_CELL / 2 - GAP / 2;
   const wallHeight = CUBE_SIZE * 2;
