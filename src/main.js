@@ -111,8 +111,8 @@ function createGroundPlane() {
 
 // ─── Grid visual (floor lines — perspective convergence) ─────────────────────
 function createGridVisual() {
-  const material = new THREE.LineBasicMaterial({ color: 0x222244 });
-  const brightMat = new THREE.LineBasicMaterial({ color: 0x333366 });
+  const material = new THREE.LineBasicMaterial({ color: 0x3a4a88 });
+  const brightMat = new THREE.LineBasicMaterial({ color: 0x5566bb });
   const floorY = -CUBE_SIZE / 2 + 0.01; // just above ground
 
   // Lines parallel to Z (one per column boundary) — converge to vanishing point
@@ -134,11 +134,11 @@ function createGridVisual() {
       new THREE.Vector3(GRID_COLS * COL_CELL - COL_CELL / 2 - GAP / 2, floorY, z),
     ];
     const geo = new THREE.BufferGeometry().setFromPoints(points);
-    gameGroup.add(new THREE.Line(geo, material));
+    gameGroup.add(new THREE.Line(geo, brightMat));
   }
 
   // Side walls (subtle vertical planes for corridor feel)
-  const wallMat = new THREE.LineBasicMaterial({ color: 0x222244 });
+  const wallMat = new THREE.LineBasicMaterial({ color: 0x3a4a88 });
   const leftX = -COL_CELL / 2 - GAP / 2;
   const rightX = GRID_COLS * COL_CELL - COL_CELL / 2 - GAP / 2;
   const wallHeight = CUBE_SIZE * 2;
@@ -202,7 +202,7 @@ function updateColumnHighlight() {
 }
 
 // ─── Spawn-point cube (right in front of the player — big and close) ─────────
-const spawnGeo = new THREE.BoxGeometry(CUBE_SIZE * 0.75, CUBE_SIZE * 0.75, CUBE_SIZE * 0.75);
+const spawnGeo = new THREE.BoxGeometry(CUBE_SIZE * 0.6, CUBE_SIZE * 0.6, CUBE_SIZE * 0.6);
 const spawnMat = new THREE.MeshLambertMaterial({ color: COLORS[currentColorIndex] });
 const spawnCube = new THREE.Mesh(spawnGeo, spawnMat);
 spawnCube.position.set(currentCol * COL_CELL, 0, -1); // just in front of camera
@@ -219,7 +219,7 @@ function randomColorIndex() {
 }
 
 function createCubeMesh(colorIndex) {
-  const geo = new THREE.BoxGeometry(CUBE_SIZE * 0.75, CUBE_SIZE * 0.75, CUBE_SIZE * 0.75);
+  const geo = new THREE.BoxGeometry(CUBE_SIZE * 0.6, CUBE_SIZE * 0.6, CUBE_SIZE * 0.6);
   const mat = new THREE.MeshLambertMaterial({ color: COLORS[colorIndex] });
   return new THREE.Mesh(geo, mat);
 }
@@ -569,6 +569,7 @@ window.addEventListener('keydown', (e) => {
 // ─── Touch / swipe controls (mobile) ─────────────────────────────────────────
 let touchStartX = null;
 let touchStartY = null;
+let touchInZone = false;
 const SWIPE_THRESHOLD = 30; // min px to count as a swipe
 
 window.addEventListener('touchstart', (e) => {
@@ -576,10 +577,17 @@ window.addEventListener('touchstart', (e) => {
   const t = e.touches[0];
   touchStartX = t.clientX;
   touchStartY = t.clientY;
+  // Only respond to swipes that start in the lower two-thirds of the screen
+  // (where the spawn cube is visible)
+  touchInZone = t.clientY > window.innerHeight * 0.33;
 }, { passive: true });
 
 window.addEventListener('touchend', (e) => {
-  if (gameOver || touchStartX === null) return;
+  if (gameOver || touchStartX === null || !touchInZone) {
+    touchStartX = null;
+    touchStartY = null;
+    return;
+  }
   const t = e.changedTouches[0];
   const dx = t.clientX - touchStartX;
   const dy = t.clientY - touchStartY;
@@ -594,18 +602,15 @@ window.addEventListener('touchend', (e) => {
   if (absDx < SWIPE_THRESHOLD && absDy < SWIPE_THRESHOLD) return;
 
   if (absDy > absDx) {
-    // Vertical swipe — only care about up (shoot)
+    // Vertical swipe — swipe up to shoot
     if (dy < 0) {
       shoot();
     }
   } else {
-    // Horizontal swipe — move column
-    // Camera faces +Z so screen-left = +X, screen-right = -X
-    if (dx < 0) {
-      // swipe left on screen → visual left → +X column
+    // Horizontal swipe — swipe right → move right, swipe left → move left
+    if (dx > 0) {
       currentCol = Math.min(GRID_COLS - 1, currentCol + 1);
     } else {
-      // swipe right on screen → visual right → -X column
       currentCol = Math.max(0, currentCol - 1);
     }
     updateSpawnCube();
