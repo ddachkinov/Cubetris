@@ -202,7 +202,7 @@ function updateColumnHighlight() {
 }
 
 // ─── Spawn-point cube (right in front of the player — big and close) ─────────
-const spawnGeo = new THREE.BoxGeometry(CUBE_SIZE * 0.9, CUBE_SIZE * 0.9, CUBE_SIZE * 0.9);
+const spawnGeo = new THREE.BoxGeometry(CUBE_SIZE * 0.75, CUBE_SIZE * 0.75, CUBE_SIZE * 0.75);
 const spawnMat = new THREE.MeshLambertMaterial({ color: COLORS[currentColorIndex] });
 const spawnCube = new THREE.Mesh(spawnGeo, spawnMat);
 spawnCube.position.set(currentCol * COL_CELL, 0, -1); // just in front of camera
@@ -219,7 +219,7 @@ function randomColorIndex() {
 }
 
 function createCubeMesh(colorIndex) {
-  const geo = new THREE.BoxGeometry(CUBE_SIZE * 0.9, CUBE_SIZE * 0.9, CUBE_SIZE * 0.9);
+  const geo = new THREE.BoxGeometry(CUBE_SIZE * 0.75, CUBE_SIZE * 0.75, CUBE_SIZE * 0.75);
   const mat = new THREE.MeshLambertMaterial({ color: COLORS[colorIndex] });
   return new THREE.Mesh(geo, mat);
 }
@@ -563,6 +563,53 @@ window.addEventListener('keydown', (e) => {
       e.preventDefault();
       shoot();
       break;
+  }
+});
+
+// ─── Touch / swipe controls (mobile) ─────────────────────────────────────────
+let touchStartX = null;
+let touchStartY = null;
+const SWIPE_THRESHOLD = 30; // min px to count as a swipe
+
+window.addEventListener('touchstart', (e) => {
+  if (gameOver) return;
+  const t = e.touches[0];
+  touchStartX = t.clientX;
+  touchStartY = t.clientY;
+}, { passive: true });
+
+window.addEventListener('touchend', (e) => {
+  if (gameOver || touchStartX === null) return;
+  const t = e.changedTouches[0];
+  const dx = t.clientX - touchStartX;
+  const dy = t.clientY - touchStartY;
+
+  touchStartX = null;
+  touchStartY = null;
+
+  const absDx = Math.abs(dx);
+  const absDy = Math.abs(dy);
+
+  // Must exceed threshold
+  if (absDx < SWIPE_THRESHOLD && absDy < SWIPE_THRESHOLD) return;
+
+  if (absDy > absDx) {
+    // Vertical swipe — only care about up (shoot)
+    if (dy < 0) {
+      shoot();
+    }
+  } else {
+    // Horizontal swipe — move column
+    // Camera faces +Z so screen-left = +X, screen-right = -X
+    if (dx < 0) {
+      // swipe left on screen → visual left → +X column
+      currentCol = Math.min(GRID_COLS - 1, currentCol + 1);
+    } else {
+      // swipe right on screen → visual right → -X column
+      currentCol = Math.max(0, currentCol - 1);
+    }
+    updateSpawnCube();
+    updateColumnHighlight();
   }
 });
 
