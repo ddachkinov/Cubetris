@@ -55,7 +55,7 @@ const camera = new THREE.PerspectiveCamera(
   0.1,
   50
 );
-camera.position.set(centerX, 3.5, -4); // elevated, pulled back
+camera.position.set(centerX, 2.5, -6); // elevated, pulled further back
 camera.lookAt(centerX, 0, FIELD_DEPTH * 0.4); // angled down the corridor
 
 // Camera tracking state
