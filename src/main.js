@@ -124,7 +124,7 @@ const nextColorBox = document.getElementById('next-color-box');
 // ─── Three.js setup ─────────────────────────────────────────────────────────
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x0a0a1a);
-scene.fog = new THREE.Fog(0x0a0a1a, 6, 18); // fog fades distant cubes
+// No fog — keep all cubes fully visible
 
 const gridWidth = GRID_COLS * COL_CELL;
 const centerX = gridWidth / 2 - COL_CELL / 2;
