@@ -4,8 +4,9 @@ import * as THREE from 'three';
 const GRID_COLS = 7;
 const GRID_ROWS = 12;
 const CUBE_SIZE = 1;
+const CUBE_SCALE = 0.55; // visual scale of cubes
 const GAP = 0.05;
-const COL_CELL = CUBE_SIZE + GAP; // column spacing (left-right)
+const COL_CELL = CUBE_SIZE * CUBE_SCALE + GAP; // column spacing matches visual cube size
 const FIELD_DEPTH = 25; // 25 meters from player to back wall
 const DEPTH_CELL = FIELD_DEPTH / GRID_ROWS; // ~2.08m per row slot
 const SHOOT_SPEED = 30; // faster to cover 25m
@@ -189,7 +190,7 @@ function createGridVisual() {
 }
 
 // ─── Column highlight (a strip on the ground going into the distance) ────────
-const highlightGeo = new THREE.PlaneGeometry(CUBE_SIZE, FIELD_DEPTH + 4);
+const highlightGeo = new THREE.PlaneGeometry(CUBE_SIZE * CUBE_SCALE, FIELD_DEPTH + 4);
 const highlightMat = new THREE.MeshBasicMaterial({
   color: 0xffffff,
   transparent: true,
@@ -206,7 +207,7 @@ function updateColumnHighlight() {
 }
 
 // ─── Spawn-point cube (right in front of the player — big and close) ─────────
-const spawnGeo = new THREE.BoxGeometry(CUBE_SIZE * 0.55, CUBE_SIZE * 0.55, CUBE_SIZE * 0.55);
+const spawnGeo = new THREE.BoxGeometry(CUBE_SIZE * CUBE_SCALE, CUBE_SIZE * CUBE_SCALE, CUBE_SIZE * CUBE_SCALE);
 const spawnMat = new THREE.MeshLambertMaterial({ color: COLORS[currentColorIndex] });
 const spawnCube = new THREE.Mesh(spawnGeo, spawnMat);
 spawnCube.position.set(currentCol * COL_CELL, 0, -1); // just in front of camera
@@ -224,7 +225,7 @@ function randomColorIndex() {
 }
 
 function createCubeMesh(colorIndex) {
-  const geo = new THREE.BoxGeometry(CUBE_SIZE * 0.55, CUBE_SIZE * 0.55, CUBE_SIZE * 0.55);
+  const geo = new THREE.BoxGeometry(CUBE_SIZE * CUBE_SCALE, CUBE_SIZE * CUBE_SCALE, CUBE_SIZE * CUBE_SCALE);
   const mat = new THREE.MeshLambertMaterial({ color: COLORS[colorIndex] });
   return new THREE.Mesh(geo, mat);
 }
