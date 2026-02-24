@@ -55,8 +55,8 @@ const camera = new THREE.PerspectiveCamera(
   0.1,
   50
 );
-camera.position.set(centerX, 0.75, -2.5); // eye level, a step back from spawn
-camera.lookAt(centerX, 0.3, FIELD_DEPTH * 0.45); // gaze slightly down the corridor
+camera.position.set(centerX, 3.5, -4); // elevated, pulled back
+camera.lookAt(centerX, 0, FIELD_DEPTH * 0.4); // angled down the corridor
 
 // Camera tracking state
 let cameraTargetX = centerX;
@@ -681,7 +681,7 @@ function animate() {
   // Smooth camera tracking — follow spawn cube's X position
   const lerpFactor = 1 - Math.exp(-CAMERA_LERP_SPEED * dt);
   camera.position.x += (cameraTargetX - camera.position.x) * lerpFactor;
-  camera.lookAt(camera.position.x, 0.3, FIELD_DEPTH * 0.45);
+  camera.lookAt(camera.position.x, 0, FIELD_DEPTH * 0.4);
 
   renderer.render(scene, camera);
 }
