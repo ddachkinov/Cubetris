@@ -4,12 +4,10 @@ import * as THREE from 'three';
 const GRID_COLS = 7;
 const GRID_ROWS = 12;
 const CUBE_SIZE = 1;
-const CUBE_SCALE = 0.55; // visual scale of cubes
-const GAP = 0.05;
-const COL_CELL = CUBE_SIZE * CUBE_SCALE + GAP; // column spacing matches visual cube size
-const FIELD_DEPTH = 25; // 25 meters from player to back wall
-const DEPTH_CELL = FIELD_DEPTH / GRID_ROWS; // ~2.08m per row slot
-const SHOOT_SPEED = 30; // faster to cover 25m
+const COL_CELL = CUBE_SIZE; // cubes fill columns exactly, no gap
+const DEPTH_CELL = CUBE_SIZE; // cubes fill rows exactly, no gap
+const FIELD_DEPTH = GRID_ROWS * DEPTH_CELL; // 12 units deep
+const SHOOT_SPEED = 15; // tuned for shorter field
 const WALL_ADVANCE_INTERVAL_START = 15;
 const WALL_ADVANCE_INTERVAL_MIN = 5;
 const WALL_ADVANCE_SPEEDUP = 0.5;
@@ -45,7 +43,7 @@ const nextColorBox = document.getElementById('next-color-box');
 // ─── Three.js setup ─────────────────────────────────────────────────────────
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x0a0a1a);
-scene.fog = new THREE.Fog(0x0a0a1a, 12, 32); // fog fades distant cubes
+scene.fog = new THREE.Fog(0x0a0a1a, 6, 18); // fog fades distant cubes
 
 const gridWidth = GRID_COLS * COL_CELL;
 const centerX = gridWidth / 2 - COL_CELL / 2;
@@ -122,7 +120,7 @@ function createGridVisual() {
 
   // Lines parallel to Z (one per column boundary) — converge to vanishing point
   for (let c = 0; c <= GRID_COLS; c++) {
-    const x = c * COL_CELL - COL_CELL / 2 - GAP / 2;
+    const x = c * COL_CELL - COL_CELL / 2;
     const points = [
       new THREE.Vector3(x, floorY, -2),
       new THREE.Vector3(x, floorY, FIELD_DEPTH + 1),
@@ -133,10 +131,10 @@ function createGridVisual() {
 
   // Lines parallel to X (one per row boundary) — horizontal rungs
   for (let r = 0; r <= GRID_ROWS; r++) {
-    const z = r * DEPTH_CELL - DEPTH_CELL / 2 - GAP / 2;
+    const z = r * DEPTH_CELL - DEPTH_CELL / 2;
     const points = [
-      new THREE.Vector3(-COL_CELL / 2 - GAP / 2, floorY, z),
-      new THREE.Vector3(GRID_COLS * COL_CELL - COL_CELL / 2 - GAP / 2, floorY, z),
+      new THREE.Vector3(-COL_CELL / 2, floorY, z),
+      new THREE.Vector3(GRID_COLS * COL_CELL - COL_CELL / 2, floorY, z),
     ];
     const geo = new THREE.BufferGeometry().setFromPoints(points);
     gameGroup.add(new THREE.Line(geo, material));
@@ -144,8 +142,8 @@ function createGridVisual() {
 
   // Side walls (subtle vertical planes for corridor feel)
   const wallMat = new THREE.LineBasicMaterial({ color: 0x444477 });
-  const leftX = -COL_CELL / 2 - GAP / 2;
-  const rightX = GRID_COLS * COL_CELL - COL_CELL / 2 - GAP / 2;
+  const leftX = -COL_CELL / 2;
+  const rightX = GRID_COLS * COL_CELL - COL_CELL / 2;
   const wallHeight = CUBE_SIZE * 2;
 
   [leftX, rightX].forEach((x) => {
@@ -170,7 +168,7 @@ function createGridVisual() {
 
   // Back wall indicator — glowing red line at the far wall
   const wallIndicatorMat = new THREE.LineBasicMaterial({ color: 0xff2222 });
-  const wallZ = (GRID_ROWS - 1) * DEPTH_CELL + DEPTH_CELL / 2 + GAP / 2;
+  const wallZ = (GRID_ROWS - 1) * DEPTH_CELL + DEPTH_CELL / 2;
   const wallPts = [
     new THREE.Vector3(leftX, floorY, wallZ),
     new THREE.Vector3(rightX, floorY, wallZ),
@@ -190,7 +188,7 @@ function createGridVisual() {
 }
 
 // ─── Column highlight (a strip on the ground going into the distance) ────────
-const highlightGeo = new THREE.PlaneGeometry(CUBE_SIZE * CUBE_SCALE, FIELD_DEPTH + 4);
+const highlightGeo = new THREE.PlaneGeometry(CUBE_SIZE, FIELD_DEPTH + 4);
 const highlightMat = new THREE.MeshBasicMaterial({
   color: 0xffffff,
   transparent: true,
@@ -207,7 +205,7 @@ function updateColumnHighlight() {
 }
 
 // ─── Spawn-point cube (right in front of the player — big and close) ─────────
-const spawnGeo = new THREE.BoxGeometry(CUBE_SIZE * CUBE_SCALE, CUBE_SIZE * CUBE_SCALE, CUBE_SIZE * CUBE_SCALE);
+const spawnGeo = new THREE.BoxGeometry(CUBE_SIZE, CUBE_SIZE, CUBE_SIZE);
 const spawnMat = new THREE.MeshLambertMaterial({ color: COLORS[currentColorIndex] });
 const spawnCube = new THREE.Mesh(spawnGeo, spawnMat);
 spawnCube.position.set(currentCol * COL_CELL, 0, -1); // just in front of camera
@@ -225,7 +223,7 @@ function randomColorIndex() {
 }
 
 function createCubeMesh(colorIndex) {
-  const geo = new THREE.BoxGeometry(CUBE_SIZE * CUBE_SCALE, CUBE_SIZE * CUBE_SCALE, CUBE_SIZE * CUBE_SCALE);
+  const geo = new THREE.BoxGeometry(CUBE_SIZE, CUBE_SIZE, CUBE_SIZE);
   const mat = new THREE.MeshLambertMaterial({ color: COLORS[colorIndex] });
   return new THREE.Mesh(geo, mat);
 }
@@ -301,9 +299,10 @@ function findMatchGroup(col, row) {
 function spawnParticles(col, row, colorIndex) {
   const cx = colToX(col);
   const cz = rowToZ(row);
-  const count = 12;
+  const floorY = -CUBE_SIZE / 2;
+  const count = 14;
   for (let i = 0; i < count; i++) {
-    const size = 0.1 + Math.random() * 0.15;
+    const size = 0.08 + Math.random() * 0.14;
     const geo = new THREE.BoxGeometry(size, size, size);
     const mat = new THREE.MeshLambertMaterial({ color: COLORS[colorIndex] });
     const mesh = new THREE.Mesh(geo, mat);
@@ -311,13 +310,16 @@ function spawnParticles(col, row, colorIndex) {
     gameGroup.add(mesh);
 
     const angle = (Math.PI * 2 * i) / count + Math.random() * 0.3;
-    const speed = 3 + Math.random() * 4;
+    const speed = 2.5 + Math.random() * 3.5;
     particles.push({
       mesh,
       vx: Math.cos(angle) * speed,
-      vy: Math.abs(Math.sin(angle)) * speed * 0.7 + 1, // bias upward
+      vy: Math.abs(Math.sin(angle)) * speed * 0.8 + 2, // strong upward burst
       vz: Math.sin(angle) * speed * 0.5,
-      life: 0.6 + Math.random() * 0.4,
+      life: 1.2 + Math.random() * 0.6, // longer life for bounces
+      floorY: floorY + size / 2, // ground level accounting for particle size
+      bounceDamping: 0.4 + Math.random() * 0.2, // energy kept per bounce
+      spinSpeed: (Math.random() - 0.5) * 12, // tumble rotation
     });
   }
 }
@@ -328,9 +330,25 @@ function updateParticles(dt) {
     p.mesh.position.x += p.vx * dt;
     p.mesh.position.y += p.vy * dt;
     p.mesh.position.z += p.vz * dt;
-    p.vy -= 9.8 * dt; // gravity pulls them down
+    p.vy -= 12 * dt; // gravity
+
+    // Bounce off ground
+    if (p.mesh.position.y <= p.floorY && p.vy < 0) {
+      p.mesh.position.y = p.floorY;
+      p.vy = -p.vy * p.bounceDamping; // reverse and dampen
+      p.vx *= 0.8; // friction on bounce
+      p.vz *= 0.8;
+    }
+
+    // Tumble rotation
+    p.mesh.rotation.x += p.spinSpeed * dt;
+    p.mesh.rotation.z += p.spinSpeed * 0.7 * dt;
+
     p.life -= dt;
-    p.mesh.scale.setScalar(Math.max(0, p.life));
+    // Fade out over the last 0.4s of life
+    const fadeStart = 0.4;
+    const scale = p.life < fadeStart ? p.life / fadeStart : 1;
+    p.mesh.scale.setScalar(Math.max(0, scale));
 
     if (p.life <= 0) {
       gameGroup.remove(p.mesh);
