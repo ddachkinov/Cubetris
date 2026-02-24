@@ -20,6 +20,87 @@ const COLORS = [
 ];
 const COLOR_NAMES = ['#ff4444', '#44bb44', '#4488ff', '#ffcc00', '#ff66ff'];
 
+// ─── Audio (Web Audio API — synthesized, no external files) ─────────────────
+const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+
+// Unlock AudioContext on first user interaction (browser policy)
+function ensureAudio() {
+  if (audioCtx.state === 'suspended') audioCtx.resume();
+}
+window.addEventListener('keydown', ensureAudio, { once: true });
+window.addEventListener('touchstart', ensureAudio, { once: true });
+
+function playExplosionSound() {
+  const now = audioCtx.currentTime;
+
+  // Noise burst through bandpass filter for a crunchy pop
+  const duration = 0.25;
+  const bufferSize = audioCtx.sampleRate * duration;
+  const buffer = audioCtx.createBuffer(1, bufferSize, audioCtx.sampleRate);
+  const data = buffer.getChannelData(0);
+  for (let i = 0; i < bufferSize; i++) {
+    data[i] = (Math.random() * 2 - 1) * Math.exp(-i / (bufferSize * 0.15));
+  }
+  const noise = audioCtx.createBufferSource();
+  noise.buffer = buffer;
+
+  const bandpass = audioCtx.createBiquadFilter();
+  bandpass.type = 'bandpass';
+  bandpass.frequency.setValueAtTime(800, now);
+  bandpass.frequency.exponentialRampToValueAtTime(200, now + duration);
+  bandpass.Q.value = 1.5;
+
+  const gain = audioCtx.createGain();
+  gain.gain.setValueAtTime(0.35, now);
+  gain.gain.exponentialRampToValueAtTime(0.001, now + duration);
+
+  noise.connect(bandpass).connect(gain).connect(audioCtx.destination);
+  noise.start(now);
+  noise.stop(now + duration);
+
+  // Low thump underneath
+  const osc = audioCtx.createOscillator();
+  osc.type = 'sine';
+  osc.frequency.setValueAtTime(150, now);
+  osc.frequency.exponentialRampToValueAtTime(40, now + 0.15);
+  const oscGain = audioCtx.createGain();
+  oscGain.gain.setValueAtTime(0.3, now);
+  oscGain.gain.exponentialRampToValueAtTime(0.001, now + 0.15);
+  osc.connect(oscGain).connect(audioCtx.destination);
+  osc.start(now);
+  osc.stop(now + 0.15);
+}
+
+// Throttle bounce sounds so they don't overwhelm
+let lastBounceTime = 0;
+const BOUNCE_COOLDOWN = 0.04; // seconds between bounce sounds
+
+function playBounceSound(velocity) {
+  const now = audioCtx.currentTime;
+  if (now - lastBounceTime < BOUNCE_COOLDOWN) return;
+  lastBounceTime = now;
+
+  // Volume scales with impact velocity
+  const vol = Math.min(0.15, Math.abs(velocity) * 0.025);
+  if (vol < 0.005) return; // too quiet, skip
+
+  const duration = 0.06;
+  const osc = audioCtx.createOscillator();
+  osc.type = 'triangle';
+  // Higher pitch for harder impacts
+  const freq = 800 + Math.abs(velocity) * 120 + Math.random() * 200;
+  osc.frequency.setValueAtTime(freq, now);
+  osc.frequency.exponentialRampToValueAtTime(freq * 0.5, now + duration);
+
+  const gain = audioCtx.createGain();
+  gain.gain.setValueAtTime(vol, now);
+  gain.gain.exponentialRampToValueAtTime(0.001, now + duration);
+
+  osc.connect(gain).connect(audioCtx.destination);
+  osc.start(now);
+  osc.stop(now + duration);
+}
+
 // ─── State ───────────────────────────────────────────────────────────────────
 let grid = [];
 let currentCol = Math.floor(GRID_COLS / 2);
@@ -297,6 +378,7 @@ function findMatchGroup(col, row) {
 
 // ─── Particle explosion ─────────────────────────────────────────────────────
 function spawnParticles(col, row, colorIndex) {
+  playExplosionSound();
   const cx = colToX(col);
   const cz = rowToZ(row);
   const floorY = -CUBE_SIZE / 2;
@@ -334,6 +416,7 @@ function updateParticles(dt) {
 
     // Bounce off ground
     if (p.mesh.position.y <= p.floorY && p.vy < 0) {
+      playBounceSound(p.vy);
       p.mesh.position.y = p.floorY;
       p.vy = -p.vy * p.bounceDamping; // reverse and dampen
       p.vx *= 0.8; // friction on bounce
