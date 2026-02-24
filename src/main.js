@@ -59,6 +59,10 @@ const camera = new THREE.PerspectiveCamera(
 camera.position.set(centerX, 0.75, -2.5); // eye level, a step back from spawn
 camera.lookAt(centerX, 0.3, FIELD_DEPTH * 0.45); // gaze slightly down the corridor
 
+// Camera tracking state
+let cameraTargetX = centerX;
+const CAMERA_LERP_SPEED = 8; // how fast camera catches up
+
 const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
@@ -202,7 +206,7 @@ function updateColumnHighlight() {
 }
 
 // ─── Spawn-point cube (right in front of the player — big and close) ─────────
-const spawnGeo = new THREE.BoxGeometry(CUBE_SIZE * 0.75, CUBE_SIZE * 0.75, CUBE_SIZE * 0.75);
+const spawnGeo = new THREE.BoxGeometry(CUBE_SIZE * 0.55, CUBE_SIZE * 0.55, CUBE_SIZE * 0.55);
 const spawnMat = new THREE.MeshLambertMaterial({ color: COLORS[currentColorIndex] });
 const spawnCube = new THREE.Mesh(spawnGeo, spawnMat);
 spawnCube.position.set(currentCol * COL_CELL, 0, -1); // just in front of camera
@@ -211,6 +215,7 @@ gameGroup.add(spawnCube);
 function updateSpawnCube() {
   spawnCube.position.x = currentCol * COL_CELL;
   spawnMat.color.setHex(COLORS[currentColorIndex]);
+  cameraTargetX = colToX(currentCol);
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -219,7 +224,7 @@ function randomColorIndex() {
 }
 
 function createCubeMesh(colorIndex) {
-  const geo = new THREE.BoxGeometry(CUBE_SIZE * 0.75, CUBE_SIZE * 0.75, CUBE_SIZE * 0.75);
+  const geo = new THREE.BoxGeometry(CUBE_SIZE * 0.55, CUBE_SIZE * 0.55, CUBE_SIZE * 0.55);
   const mat = new THREE.MeshLambertMaterial({ color: COLORS[colorIndex] });
   return new THREE.Mesh(geo, mat);
 }
@@ -532,6 +537,10 @@ function restartGame() {
   updateColumnHighlight();
   updateNextPreview();
 
+  // Reset camera to center
+  cameraTargetX = colToX(currentCol);
+  camera.position.x = cameraTargetX;
+
   gameOverScreen.style.display = 'none';
 
   initGrid();
@@ -649,6 +658,11 @@ function animate() {
   } else {
     updateParticles(dt);
   }
+
+  // Smooth camera tracking — follow spawn cube's X position
+  const lerpFactor = 1 - Math.exp(-CAMERA_LERP_SPEED * dt);
+  camera.position.x += (cameraTargetX - camera.position.x) * lerpFactor;
+  camera.lookAt(camera.position.x, 0.3, FIELD_DEPTH * 0.45);
 
   renderer.render(scene, camera);
 }
