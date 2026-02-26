@@ -73,32 +73,64 @@ function playExplosionSound() {
 
 // Throttle bounce sounds so they don't overwhelm
 let lastBounceTime = 0;
-const BOUNCE_COOLDOWN = 0.04; // seconds between bounce sounds
+const BOUNCE_COOLDOWN = 0.025; // tight cooldown — candies scatter fast
 
 function playBounceSound(velocity) {
   const now = audioCtx.currentTime;
   if (now - lastBounceTime < BOUNCE_COOLDOWN) return;
   lastBounceTime = now;
 
-  // Volume scales with impact velocity
-  const vol = Math.min(0.15, Math.abs(velocity) * 0.025);
-  if (vol < 0.005) return; // too quiet, skip
+  const vol = Math.min(0.18, Math.abs(velocity) * 0.03);
+  if (vol < 0.005) return;
 
-  const duration = 0.06;
-  const osc = audioCtx.createOscillator();
-  osc.type = 'triangle';
-  // Higher pitch for harder impacts
-  const freq = 800 + Math.abs(velocity) * 120 + Math.random() * 200;
-  osc.frequency.setValueAtTime(freq, now);
-  osc.frequency.exponentialRampToValueAtTime(freq * 0.5, now + duration);
+  // Hard candy / M&M hitting a hard floor — bright, clicky, short
+  const dur = 0.035;
+  const baseFreq = 3000 + Math.random() * 2000 + Math.abs(velocity) * 200;
 
-  const gain = audioCtx.createGain();
-  gain.gain.setValueAtTime(vol, now);
-  gain.gain.exponentialRampToValueAtTime(0.001, now + duration);
+  // Primary click — sharp sine tap
+  const osc1 = audioCtx.createOscillator();
+  osc1.type = 'sine';
+  osc1.frequency.setValueAtTime(baseFreq, now);
+  osc1.frequency.exponentialRampToValueAtTime(baseFreq * 0.6, now + dur);
+  const g1 = audioCtx.createGain();
+  g1.gain.setValueAtTime(vol, now);
+  g1.gain.exponentialRampToValueAtTime(0.001, now + dur);
+  osc1.connect(g1).connect(audioCtx.destination);
+  osc1.start(now);
+  osc1.stop(now + dur);
 
-  osc.connect(gain).connect(audioCtx.destination);
-  osc.start(now);
-  osc.stop(now + duration);
+  // Shell harmonic — tiny square-wave overtone for the candy-coat click
+  const osc2 = audioCtx.createOscillator();
+  osc2.type = 'square';
+  const shellDur = dur * 0.5;
+  osc2.frequency.setValueAtTime(baseFreq * 1.5, now);
+  osc2.frequency.exponentialRampToValueAtTime(baseFreq, now + shellDur);
+  const g2 = audioCtx.createGain();
+  g2.gain.setValueAtTime(vol * 0.3, now);
+  g2.gain.exponentialRampToValueAtTime(0.001, now + shellDur);
+  osc2.connect(g2).connect(audioCtx.destination);
+  osc2.start(now);
+  osc2.stop(now + shellDur);
+
+  // Tiny high-passed noise burst — the "hard surface" texture
+  const noiseDur = 0.012;
+  const bufSize = Math.ceil(audioCtx.sampleRate * noiseDur);
+  const buf = audioCtx.createBuffer(1, bufSize, audioCtx.sampleRate);
+  const d = buf.getChannelData(0);
+  for (let i = 0; i < bufSize; i++) {
+    d[i] = (Math.random() * 2 - 1) * Math.exp(-i / (bufSize * 0.25));
+  }
+  const noiseSrc = audioCtx.createBufferSource();
+  noiseSrc.buffer = buf;
+  const hp = audioCtx.createBiquadFilter();
+  hp.type = 'highpass';
+  hp.frequency.value = 4000;
+  const gn = audioCtx.createGain();
+  gn.gain.setValueAtTime(vol * 0.5, now);
+  gn.gain.exponentialRampToValueAtTime(0.001, now + noiseDur);
+  noiseSrc.connect(hp).connect(gn).connect(audioCtx.destination);
+  noiseSrc.start(now);
+  noiseSrc.stop(now + noiseDur);
 }
 
 // ─── State ───────────────────────────────────────────────────────────────────
