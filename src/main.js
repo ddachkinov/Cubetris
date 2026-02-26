@@ -677,51 +677,93 @@ window.addEventListener('keydown', (e) => {
   }
 });
 
-// ─── Touch / swipe controls (mobile) ─────────────────────────────────────────
+// ─── Touch controls (hold & drag — responsive with feedback) ─────────────────
 let touchStartX = null;
 let touchStartY = null;
-const SWIPE_THRESHOLD = 30; // min px to count as a swipe
+let touchStartCol = null;
+let touchDragged = false;
+const DRAG_COL_PX = 40; // pixels of horizontal drag per column shift
+
+// Visual feedback state — scale pop on column change
+let spawnScalePop = 0; // 0 = no pop, 1 = full pop, decays over time
+
+// Haptic feedback helper
+function hapticPulse(ms = 10) {
+  if (navigator.vibrate) navigator.vibrate(ms);
+}
+
+// Short tick sound on column change
+function playTickSound() {
+  const now = audioCtx.currentTime;
+  const osc = audioCtx.createOscillator();
+  osc.type = 'sine';
+  osc.frequency.setValueAtTime(1200, now);
+  osc.frequency.exponentialRampToValueAtTime(800, now + 0.03);
+  const gain = audioCtx.createGain();
+  gain.gain.setValueAtTime(0.08, now);
+  gain.gain.exponentialRampToValueAtTime(0.001, now + 0.03);
+  osc.connect(gain).connect(audioCtx.destination);
+  osc.start(now);
+  osc.stop(now + 0.03);
+}
+
+function moveToColumn(newCol) {
+  if (newCol === currentCol) return;
+  currentCol = newCol;
+  updateSpawnCube();
+  updateColumnHighlight();
+  // Feedback burst
+  spawnScalePop = 1;
+  hapticPulse(12);
+  playTickSound();
+}
 
 window.addEventListener('touchstart', (e) => {
   if (gameOver) return;
   const t = e.touches[0];
   touchStartX = t.clientX;
   touchStartY = t.clientY;
+  touchStartCol = currentCol;
+  touchDragged = false;
+}, { passive: true });
+
+window.addEventListener('touchmove', (e) => {
+  if (gameOver || touchStartX === null) return;
+  const t = e.touches[0];
+  const dx = t.clientX - touchStartX;
+
+  // Calculate how many columns the drag has shifted
+  // Negative screen dx = drag left → +column (visual left = +X)
+  const colShift = Math.round(-dx / DRAG_COL_PX);
+  const newCol = Math.max(0, Math.min(GRID_COLS - 1, touchStartCol + colShift));
+
+  if (newCol !== currentCol) {
+    touchDragged = true;
+    moveToColumn(newCol);
+  }
 }, { passive: true });
 
 window.addEventListener('touchend', (e) => {
-  if (gameOver || touchStartX === null) return;
+  if (gameOver || touchStartX === null) {
+    touchStartX = null;
+    return;
+  }
   const t = e.changedTouches[0];
-  const dx = t.clientX - touchStartX;
   const dy = t.clientY - touchStartY;
+
+  // If finger didn't drag horizontally, check for upward swipe to shoot
+  if (!touchDragged && dy < -30) {
+    shoot();
+  }
+  // Tap (no drag, no swipe) → shoot
+  if (!touchDragged && Math.abs(dy) < 20 && Math.abs(t.clientX - touchStartX) < 20) {
+    shoot();
+  }
 
   touchStartX = null;
   touchStartY = null;
-
-  const absDx = Math.abs(dx);
-  const absDy = Math.abs(dy);
-
-  // Must exceed threshold
-  if (absDx < SWIPE_THRESHOLD && absDy < SWIPE_THRESHOLD) return;
-
-  if (absDy > absDx) {
-    // Vertical swipe — only care about up (shoot)
-    if (dy < 0) {
-      shoot();
-    }
-  } else {
-    // Horizontal swipe — move column
-    // Camera faces +Z so screen-left = +X, screen-right = -X
-    if (dx < 0) {
-      // swipe left on screen → visual left → +X column
-      currentCol = Math.min(GRID_COLS - 1, currentCol + 1);
-    } else {
-      // swipe right on screen → visual right → -X column
-      currentCol = Math.max(0, currentCol - 1);
-    }
-    updateSpawnCube();
-    updateColumnHighlight();
-  }
+  touchStartCol = null;
+  touchDragged = false;
 });
 
 restartBtn.addEventListener('click', restartGame);
@@ -759,6 +801,15 @@ function animate() {
     }
   } else {
     updateParticles(dt);
+  }
+
+  // Spawn cube scale-pop feedback (decays quickly)
+  if (spawnScalePop > 0) {
+    spawnScalePop = Math.max(0, spawnScalePop - dt * 8); // decay in ~0.12s
+    const s = 1 + spawnScalePop * 0.25; // peak at 1.25x scale
+    spawnCube.scale.set(s, s, s);
+  } else {
+    spawnCube.scale.set(1, 1, 1);
   }
 
   // Smooth camera tracking — follow spawn cube's X position
