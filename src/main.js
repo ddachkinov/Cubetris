@@ -713,6 +713,8 @@ function updateNextPreview() {
 }
 
 // ─── Input ───────────────────────────────────────────────────────────────────
+let spaceHeld = false;
+
 window.addEventListener('keydown', (e) => {
   if (gameOver) return;
 
@@ -731,8 +733,21 @@ window.addEventListener('keydown', (e) => {
       break;
     case 'Space':
       e.preventDefault();
-      shoot();
+      if (!spaceHeld) {
+        spaceHeld = true;
+        holdShooting = true;
+        holdShootTimer = 0;
+        holdShootReady = false;
+        shoot();
+      }
       break;
+  }
+});
+
+window.addEventListener('keyup', (e) => {
+  if (e.code === 'Space') {
+    spaceHeld = false;
+    holdShooting = false;
   }
 });
 
@@ -742,6 +757,13 @@ let touchStartY = null;
 let touchStartCol = null;
 let touchDragged = false;
 const DRAG_COL_PX = 40; // pixels of horizontal drag per column shift
+
+// Continuous shooting state (touch hold + keyboard hold)
+let holdShooting = false; // true while finger is held still (no drag)
+const HOLD_SHOOT_DELAY = 0.4; // seconds before auto-fire starts
+const HOLD_SHOOT_INTERVAL = 0.08; // seconds between auto-fire shots (fires as fast as cubes land)
+let holdShootTimer = 0;
+let holdShootReady = false; // becomes true after initial delay
 
 // Visual feedback state — scale pop on column change
 let spawnScalePop = 0; // 0 = no pop, 1 = full pop, decays over time
@@ -784,6 +806,11 @@ window.addEventListener('touchstart', (e) => {
   touchStartY = t.clientY;
   touchStartCol = currentCol;
   touchDragged = false;
+  // Start hold-to-shoot tracking
+  holdShooting = true;
+  holdShootTimer = 0;
+  holdShootReady = false;
+  shoot(); // fire immediately on touch
 }, { passive: true });
 
 window.addEventListener('touchmove', (e) => {
@@ -798,27 +825,13 @@ window.addEventListener('touchmove', (e) => {
 
   if (newCol !== currentCol) {
     touchDragged = true;
+    holdShooting = false; // dragging — stop auto-fire
     moveToColumn(newCol);
   }
 }, { passive: true });
 
-window.addEventListener('touchend', (e) => {
-  if (gameOver || touchStartX === null) {
-    touchStartX = null;
-    return;
-  }
-  const t = e.changedTouches[0];
-  const dy = t.clientY - touchStartY;
-
-  // If finger didn't drag horizontally, check for upward swipe to shoot
-  if (!touchDragged && dy < -30) {
-    shoot();
-  }
-  // Tap (no drag, no swipe) → shoot
-  if (!touchDragged && Math.abs(dy) < 20 && Math.abs(t.clientX - touchStartX) < 20) {
-    shoot();
-  }
-
+window.addEventListener('touchend', () => {
+  holdShooting = false;
   touchStartX = null;
   touchStartY = null;
   touchStartCol = null;
@@ -852,6 +865,24 @@ function animate() {
   if (!gameOver) {
     updateShooting(dt);
     updateParticles(dt);
+
+    // Continuous shooting while finger is held still
+    if (holdShooting && !touchDragged) {
+      holdShootTimer += dt;
+      if (!holdShootReady) {
+        // Wait for initial delay before auto-fire kicks in
+        if (holdShootTimer >= HOLD_SHOOT_DELAY) {
+          holdShootReady = true;
+          holdShootTimer = 0;
+        }
+      } else {
+        // Auto-fire: shoot as soon as the previous cube has landed
+        if (!shootingCube && holdShootTimer >= HOLD_SHOOT_INTERVAL) {
+          holdShootTimer = 0;
+          shoot();
+        }
+      }
+    }
 
     wallAdvanceTimer += dt;
     if (wallAdvanceTimer >= wallAdvanceInterval) {
