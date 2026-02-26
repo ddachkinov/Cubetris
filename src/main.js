@@ -556,6 +556,20 @@ function shoot() {
 function updateShooting(dt) {
   if (!shootingCube) return;
 
+  // Recalculate landing row every frame — grid may have shifted (wall advance)
+  const freshRow = landingRow(shootingCube.col);
+  if (freshRow < 0) {
+    // Column is completely full — discard the shot
+    gameGroup.remove(shootingCube.mesh);
+    shootingCube.mesh.geometry.dispose();
+    shootingCube.mesh.material.dispose();
+    shootingCube = null;
+    shootingVelocity = null;
+    checkGameOver();
+    return;
+  }
+  shootingCube.targetRow = freshRow;
+
   const targetZ = rowToZ(shootingCube.targetRow);
   shootingCube.mesh.position.z += shootingVelocity * dt;
 
@@ -633,6 +647,7 @@ function triggerGameOver() {
 }
 
 function restartGame() {
+  // Remove all grid-tracked cubes
   for (let c = 0; c < GRID_COLS; c++) {
     for (let r = 0; r < GRID_ROWS; r++) {
       if (grid[c][r]) {
@@ -656,6 +671,18 @@ function restartGame() {
     shootingCube.mesh.geometry.dispose();
     shootingCube.mesh.material.dispose();
     shootingCube = null;
+  }
+
+  // Nuclear cleanup — remove any orphaned cube meshes that slipped through
+  // (e.g., wall advance shifted grid while a cube was in-flight)
+  const keepers = new Set([spawnCube, columnHighlight]);
+  for (let i = gameGroup.children.length - 1; i >= 0; i--) {
+    const child = gameGroup.children[i];
+    if (child.isMesh && child.geometry?.type === 'BoxGeometry' && !keepers.has(child)) {
+      gameGroup.remove(child);
+      child.geometry.dispose();
+      child.material.dispose();
+    }
   }
 
   score = 0;
