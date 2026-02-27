@@ -216,88 +216,100 @@ function rowToZ(row) {
 }
 
 // ─── Ground plane ────────────────────────────────────────────────────────────
+const EXTRA_COLS = 6; // extra columns drawn on each side for infinite-track look
+const EXTRA_ROWS = 3; // extra depth lines past the back wall
 function createGroundPlane() {
-  const groundGeo = new THREE.PlaneGeometry(gridWidth + 4, FIELD_DEPTH + 8);
+  const totalWidth = gridWidth + EXTRA_COLS * 2 * COL_CELL + 4;
+  const totalDepth = FIELD_DEPTH + EXTRA_ROWS * DEPTH_CELL + 8;
+  const groundGeo = new THREE.PlaneGeometry(totalWidth, totalDepth);
   const groundMat = new THREE.MeshLambertMaterial({ color: 0x111122 });
   const ground = new THREE.Mesh(groundGeo, groundMat);
   ground.rotation.x = -Math.PI / 2;
-  ground.position.set(centerX, -CUBE_SIZE / 2, FIELD_DEPTH / 2 - 1);
+  ground.position.set(centerX, -CUBE_SIZE / 2, (FIELD_DEPTH + EXTRA_ROWS * DEPTH_CELL) / 2 - 1);
   gameGroup.add(ground);
 }
 
 // ─── Grid visual (floor lines — perspective convergence) ─────────────────────
 function createGridVisual() {
-  const material = new THREE.LineBasicMaterial({ color: 0x444477 });
-  const brightMat = new THREE.LineBasicMaterial({ color: 0x555599 });
+  const coreMat = new THREE.LineBasicMaterial({ color: 0x5566aa }); // brighter playable area
+  const fadeMat = new THREE.LineBasicMaterial({ color: 0x334466 }); // dimmer extension tracks
   const floorY = -CUBE_SIZE / 2 + 0.01; // just above ground
 
-  // Lines parallel to Z (one per column boundary) — converge to vanishing point
+  const farZ = FIELD_DEPTH + EXTRA_ROWS * DEPTH_CELL + 1;
+  const coreLeftX = -COL_CELL / 2;
+  const coreRightX = GRID_COLS * COL_CELL - COL_CELL / 2;
+  const extLeftX = coreLeftX - EXTRA_COLS * COL_CELL;
+  const extRightX = coreRightX + EXTRA_COLS * COL_CELL;
+
+  // ── Longitudinal lines (parallel to Z) ────────────────────────────────────
+  // Extra columns on the left
+  for (let i = 1; i <= EXTRA_COLS; i++) {
+    const x = coreLeftX - i * COL_CELL;
+    const pts = [new THREE.Vector3(x, floorY, -2), new THREE.Vector3(x, floorY, farZ)];
+    gameGroup.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts), fadeMat));
+  }
+  // Core playable columns
   for (let c = 0; c <= GRID_COLS; c++) {
     const x = c * COL_CELL - COL_CELL / 2;
-    const points = [
-      new THREE.Vector3(x, floorY, -2),
-      new THREE.Vector3(x, floorY, FIELD_DEPTH + 1),
-    ];
-    const geo = new THREE.BufferGeometry().setFromPoints(points);
-    gameGroup.add(new THREE.Line(geo, material));
+    const pts = [new THREE.Vector3(x, floorY, -2), new THREE.Vector3(x, floorY, farZ)];
+    gameGroup.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts), coreMat));
+  }
+  // Extra columns on the right
+  for (let i = 1; i <= EXTRA_COLS; i++) {
+    const x = coreRightX + i * COL_CELL;
+    const pts = [new THREE.Vector3(x, floorY, -2), new THREE.Vector3(x, floorY, farZ)];
+    gameGroup.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts), fadeMat));
   }
 
-  // Lines parallel to X (one per row boundary) — horizontal rungs
-  for (let r = 0; r <= GRID_ROWS; r++) {
+  // ── Cross lines (parallel to X) — span entire width including extensions ──
+  const totalRows = GRID_ROWS + EXTRA_ROWS;
+  for (let r = 0; r <= totalRows; r++) {
     const z = r * DEPTH_CELL - DEPTH_CELL / 2;
-    const points = [
-      new THREE.Vector3(-COL_CELL / 2, floorY, z),
-      new THREE.Vector3(GRID_COLS * COL_CELL - COL_CELL / 2, floorY, z),
+    const mat = r <= GRID_ROWS ? coreMat : fadeMat;
+    // Full-width cross line
+    const pts = [
+      new THREE.Vector3(extLeftX, floorY, z),
+      new THREE.Vector3(extRightX, floorY, z),
     ];
-    const geo = new THREE.BufferGeometry().setFromPoints(points);
-    gameGroup.add(new THREE.Line(geo, material));
+    gameGroup.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts), mat));
   }
 
-  // Side walls (subtle vertical planes for corridor feel)
-  const wallMat = new THREE.LineBasicMaterial({ color: 0x444477 });
-  const leftX = -COL_CELL / 2;
-  const rightX = GRID_COLS * COL_CELL - COL_CELL / 2;
+  // ── Side walls (only on the playable boundary) ────────────────────────────
+  const wallMat = new THREE.LineBasicMaterial({ color: 0x5566aa });
   const wallHeight = CUBE_SIZE * 2;
 
-  [leftX, rightX].forEach((x) => {
-    // Vertical lines along the side walls
+  [coreLeftX, coreRightX].forEach((x) => {
     for (let r = 0; r <= GRID_ROWS; r += 2) {
       const z = r * DEPTH_CELL;
       const pts = [
         new THREE.Vector3(x, floorY, z),
         new THREE.Vector3(x, floorY + wallHeight, z),
       ];
-      const geo = new THREE.BufferGeometry().setFromPoints(pts);
-      gameGroup.add(new THREE.Line(geo, wallMat));
+      gameGroup.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts), wallMat));
     }
-    // Horizontal edge along top of side walls
     const topPts = [
       new THREE.Vector3(x, floorY + wallHeight, -2),
       new THREE.Vector3(x, floorY + wallHeight, FIELD_DEPTH + 1),
     ];
-    const topGeo = new THREE.BufferGeometry().setFromPoints(topPts);
-    gameGroup.add(new THREE.Line(topGeo, wallMat));
+    gameGroup.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(topPts), wallMat));
   });
 
-  // Back wall indicator — glowing red line at the far wall
+  // ── Back wall indicator — glowing red line at the far game boundary ───────
   const wallIndicatorMat = new THREE.LineBasicMaterial({ color: 0xff2222 });
   const wallZ = (GRID_ROWS - 1) * DEPTH_CELL + DEPTH_CELL / 2;
   const wallPts = [
-    new THREE.Vector3(leftX, floorY, wallZ),
-    new THREE.Vector3(rightX, floorY, wallZ),
+    new THREE.Vector3(coreLeftX, floorY, wallZ),
+    new THREE.Vector3(coreRightX, floorY, wallZ),
   ];
-  const wallGeo = new THREE.BufferGeometry().setFromPoints(wallPts);
-  gameGroup.add(new THREE.Line(wallGeo, wallIndicatorMat));
+  gameGroup.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(wallPts), wallIndicatorMat));
 
-  // Back wall vertical line
   const wallVertPts = [
-    new THREE.Vector3(leftX, floorY, wallZ),
-    new THREE.Vector3(leftX, floorY + wallHeight, wallZ),
-    new THREE.Vector3(rightX, floorY + wallHeight, wallZ),
-    new THREE.Vector3(rightX, floorY, wallZ),
+    new THREE.Vector3(coreLeftX, floorY, wallZ),
+    new THREE.Vector3(coreLeftX, floorY + wallHeight, wallZ),
+    new THREE.Vector3(coreRightX, floorY + wallHeight, wallZ),
+    new THREE.Vector3(coreRightX, floorY, wallZ),
   ];
-  const wallVertGeo = new THREE.BufferGeometry().setFromPoints(wallVertPts);
-  gameGroup.add(new THREE.Line(wallVertGeo, wallIndicatorMat));
+  gameGroup.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(wallVertPts), wallIndicatorMat));
 }
 
 // ─── Column highlight (a strip on the ground going into the distance) ────────
