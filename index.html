@@ -115,38 +115,6 @@
         0%, 100% { border-color: rgba(255, 34, 34, 0.15); }
         50%      { border-color: rgba(255, 34, 34, 0.6); }
       }
-      /* Mobile shoot button */
-      #shoot-btn {
-        position: absolute;
-        bottom: 28px;
-        left: 50%;
-        transform: translateX(-50%);
-        width: 72px;
-        height: 72px;
-        border-radius: 50%;
-        border: 3px solid rgba(255,255,255,0.5);
-        background: rgba(74, 158, 255, 0.25);
-        color: #fff;
-        font-size: 13px;
-        font-weight: 700;
-        letter-spacing: 1px;
-        display: none;
-        align-items: center;
-        justify-content: center;
-        pointer-events: auto;
-        -webkit-tap-highlight-color: transparent;
-        touch-action: manipulation;
-        z-index: 10;
-      }
-      #shoot-btn:active {
-        background: rgba(74, 158, 255, 0.55);
-        border-color: rgba(255,255,255,0.9);
-        transform: translateX(-50%) scale(0.92);
-      }
-      @media (pointer: coarse) {
-        #shoot-btn { display: flex; }
-        #column-indicator { display: none; }
-      }
     </style>
   </head>
   <body>
@@ -159,8 +127,7 @@
       </div>
       <div id="next-label">NEXT</div>
       <div id="wall-warning"></div>
-      <button id="shoot-btn">FIRE</button>
-      <div id="column-indicator">← A/D or Arrow Keys → | SPACE to shoot</div>
+<div id="column-indicator">← A/D or Arrow Keys → | SPACE to shoot</div>
       <div id="game-over-screen">
         <h1>GAME OVER</h1>
         <p>Score: <strong id="final-score">0</strong></p>

@@ -153,7 +153,6 @@ const gameOverScreen = document.getElementById('game-over-screen');
 const restartBtn = document.getElementById('restart-btn');
 const nextColorBox = document.getElementById('next-color-box');
 const wallWarningEl = document.getElementById('wall-warning');
-const shootBtn = document.getElementById('shoot-btn');
 const uiEl = document.getElementById('ui');
 
 // ─── Score popups (floating "+N" at match positions) ─────────────────────────
@@ -865,12 +864,6 @@ window.addEventListener('touchend', (e) => {
 });
 
 restartBtn.addEventListener('click', restartGame);
-
-// ─── Mobile shoot button ──────────────────────────────────────────────────────
-shootBtn.addEventListener('touchstart', (e) => {
-  e.stopPropagation();
-  if (!gameOver) shoot();
-}, { passive: true });
 
 // ─── Resize ──────────────────────────────────────────────────────────────────
 window.addEventListener('resize', () => {
