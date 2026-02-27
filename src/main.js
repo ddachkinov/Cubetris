@@ -152,6 +152,25 @@ const finalScoreEl = document.getElementById('final-score');
 const gameOverScreen = document.getElementById('game-over-screen');
 const restartBtn = document.getElementById('restart-btn');
 const nextColorBox = document.getElementById('next-color-box');
+const wallWarningEl = document.getElementById('wall-warning');
+const shootBtn = document.getElementById('shoot-btn');
+const uiEl = document.getElementById('ui');
+
+// ─── Score popups (floating "+N" at match positions) ─────────────────────────
+function spawnScorePopup(worldX, worldZ, points) {
+  const pos = new THREE.Vector3(worldX, 1, worldZ);
+  pos.project(camera);
+  const sx = (pos.x * 0.5 + 0.5) * window.innerWidth;
+  const sy = (-pos.y * 0.5 + 0.5) * window.innerHeight;
+
+  const el = document.createElement('div');
+  el.className = 'score-popup';
+  el.textContent = `+${points}`;
+  el.style.left = `${sx}px`;
+  el.style.top = `${sy}px`;
+  uiEl.appendChild(el);
+  el.addEventListener('animationend', () => el.remove());
+}
 
 // ─── Three.js setup ─────────────────────────────────────────────────────────
 const scene = new THREE.Scene();
@@ -524,15 +543,22 @@ function resolveMatches() {
 
     if (toRemove.size > 0) {
       changed = true;
+      let sumX = 0, sumZ = 0, count = 0;
       toRemove.forEach((key) => {
         const [c, r] = key.split(',').map(Number);
         const cell = grid[c][r];
         if (cell) {
+          sumX += colToX(c);
+          sumZ += rowToZ(r);
+          count++;
           spawnParticles(c, r, cell.colorIndex);
           removeCube(c, r);
           totalCleared++;
         }
       });
+      if (count > 0) {
+        spawnScorePopup(sumX / count, sumZ / count, count * 10);
+      }
       applyGravity();
     }
   }
@@ -714,6 +740,7 @@ function restartGame() {
   cameraTargetX = colToX(currentCol);
   camera.position.x = cameraTargetX;
 
+  wallWarningEl.classList.remove('active');
   gameOverScreen.style.display = 'none';
 
   initGrid();
@@ -839,6 +866,12 @@ window.addEventListener('touchend', (e) => {
 
 restartBtn.addEventListener('click', restartGame);
 
+// ─── Mobile shoot button ──────────────────────────────────────────────────────
+shootBtn.addEventListener('touchstart', (e) => {
+  e.stopPropagation();
+  if (!gameOver) shoot();
+}, { passive: true });
+
 // ─── Resize ──────────────────────────────────────────────────────────────────
 window.addEventListener('resize', () => {
   camera.aspect = window.innerWidth / window.innerHeight;
@@ -866,8 +899,16 @@ function animate() {
     updateParticles(dt);
 
     wallAdvanceTimer += dt;
+    // Wall advance warning — pulse border in last 3 seconds
+    const timeLeft = wallAdvanceInterval - wallAdvanceTimer;
+    if (timeLeft <= 3 && timeLeft > 0) {
+      wallWarningEl.classList.add('active');
+    } else {
+      wallWarningEl.classList.remove('active');
+    }
     if (wallAdvanceTimer >= wallAdvanceInterval) {
       wallAdvanceTimer = 0;
+      wallWarningEl.classList.remove('active');
       advanceWall();
     }
   } else {
