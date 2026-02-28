@@ -52,6 +52,54 @@
         color: rgba(255,255,255,0.6);
         font-size: 12px;
       }
+      /* Pause button */
+      #pause-btn {
+        position: absolute;
+        top: 20px;
+        right: 110px;
+        width: 40px;
+        height: 40px;
+        border: 2px solid rgba(255,255,255,0.3);
+        border-radius: 8px;
+        background: rgba(0,0,0,0.3);
+        color: rgba(255,255,255,0.7);
+        font-size: 18px;
+        cursor: pointer;
+        pointer-events: auto;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+      #pause-btn:hover { background: rgba(255,255,255,0.1); }
+      /* Pause screen */
+      #pause-screen {
+        display: none;
+        position: absolute;
+        top: 0; left: 0; width: 100%; height: 100%;
+        background: rgba(0,0,0,0.75);
+        color: #fff;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        pointer-events: auto;
+        z-index: 50;
+        gap: 16px;
+      }
+      #pause-screen h1 { font-size: 48px; margin-bottom: 10px; color: #7bf; }
+      #pause-screen button {
+        font-size: 20px;
+        padding: 12px 32px;
+        border: none;
+        border-radius: 6px;
+        background: #4a9eff;
+        color: #fff;
+        cursor: pointer;
+        min-width: 180px;
+      }
+      #pause-screen button:hover { background: #3a8eef; }
+      #pause-screen .btn-restart { background: #555; }
+      #pause-screen .btn-restart:hover { background: #666; }
+      /* Game over */
       #game-over-screen {
         display: none;
         position: absolute;
@@ -115,6 +163,11 @@
         color: #ff6ef5;
         text-shadow: 0 0 10px rgba(255,110,245,0.8), 0 0 20px rgba(255,110,245,0.4);
       }
+      .score-popup.row-clear {
+        font-size: 28px;
+        color: #4f4;
+        text-shadow: 0 0 10px rgba(68,255,68,0.8), 0 0 20px rgba(68,255,68,0.4);
+      }
       @keyframes score-float {
         0%   { opacity: 1; transform: translateY(0) scale(1.2); }
         30%  { opacity: 1; transform: translateY(-20px) scale(1); }
@@ -141,6 +194,28 @@
         30%  { opacity: 1; transform: translate(-50%, -50%) scale(1); }
         75%  { opacity: 1; }
         100% { opacity: 0; transform: translate(-50%, -60%) scale(0.9); }
+      }
+      /* Row clear banner */
+      #row-clear {
+        display: none;
+        position: absolute;
+        top: 48%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        font-size: 34px;
+        font-weight: 900;
+        color: #4f4;
+        text-shadow: 0 0 15px rgba(68,255,68,0.7), 0 0 30px rgba(68,255,68,0.3);
+        pointer-events: none;
+        z-index: 15;
+        white-space: nowrap;
+      }
+      @keyframes rowclear {
+        0%   { opacity: 0; transform: translate(-50%, -50%) scaleX(0.3); }
+        15%  { opacity: 1; transform: translate(-50%, -50%) scaleX(1.1); }
+        25%  { opacity: 1; transform: translate(-50%, -50%) scaleX(1); }
+        70%  { opacity: 1; }
+        100% { opacity: 0; }
       }
       /* Wall advance warning flash */
       #wall-warning {
@@ -209,13 +284,20 @@
         <span class="hud-best">Best: <strong id="best-val">0</strong></span>
         <span class="hud-level" id="level-val">Level 1</span>
       </div>
+      <button id="pause-btn">| |</button>
       <div id="next-preview">
         <div id="next-color-box"></div>
       </div>
       <div id="next-label">NEXT</div>
       <div id="wall-warning"></div>
       <div id="level-up"></div>
-      <div id="column-indicator">← A/D or Arrow Keys → | SPACE to shoot</div>
+      <div id="row-clear"></div>
+      <div id="column-indicator">← A/D or Arrow Keys → | SPACE to shoot | ESC pause</div>
+      <div id="pause-screen">
+        <h1>PAUSED</h1>
+        <button id="resume-btn">Resume</button>
+        <button id="pause-restart-btn" class="btn-restart">Restart</button>
+      </div>
       <div id="game-over-screen">
         <h1>GAME OVER</h1>
         <p>Score: <strong id="final-score">0</strong></p>
@@ -227,7 +309,7 @@
         <h2>CUBETRIS</h2>
         <div class="tut-line">Shoot colored cubes down the corridor.<br>Match <strong>3 or more</strong> of the same color to clear them!</div>
         <div class="tut-line">Chain combos for massive multipliers.</div>
-        <div class="tut-keys"><kbd>A</kbd> / <kbd>←</kbd> &nbsp; Move left &nbsp;&nbsp; <kbd>D</kbd> / <kbd>→</kbd> &nbsp; Move right &nbsp;&nbsp; <kbd>Space</kbd> &nbsp; Shoot</div>
+        <div class="tut-keys"><kbd>A</kbd> / <kbd>←</kbd> &nbsp; Move left &nbsp;&nbsp; <kbd>D</kbd> / <kbd>→</kbd> &nbsp; Move right &nbsp;&nbsp; <kbd>Space</kbd> &nbsp; Shoot &nbsp;&nbsp; <kbd>Esc</kbd> &nbsp; Pause</div>
         <div class="tut-keys">Mobile: drag to move, tap to shoot</div>
         <button id="tutorial-btn">GOT IT</button>
       </div>
