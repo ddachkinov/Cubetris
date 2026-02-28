@@ -11,6 +11,7 @@ const SHOOT_SPEED = 15; // tuned for shorter field
 const WALL_ADVANCE_INTERVAL_START = 15;
 const WALL_ADVANCE_INTERVAL_MIN = 5;
 const WALL_ADVANCE_SPEEDUP = 0.5;
+const CLEARS_PER_LEVEL = 15;
 const COLORS = [
   0xff4444, // red
   0x44bb44, // green
@@ -133,6 +134,57 @@ function playBounceSound(velocity) {
   noiseSrc.stop(now + noiseDur);
 }
 
+// Combo chime — rising pitch for higher chains
+function playComboSound(chain) {
+  const now = audioCtx.currentTime;
+  const baseNote = 523; // C5
+  const freq = baseNote * Math.pow(2, (chain - 1) * 2 / 12); // go up 2 semitones per chain
+  const dur = 0.15;
+
+  const osc = audioCtx.createOscillator();
+  osc.type = 'triangle';
+  osc.frequency.setValueAtTime(freq, now);
+  osc.frequency.exponentialRampToValueAtTime(freq * 1.5, now + dur * 0.3);
+  const g = audioCtx.createGain();
+  g.gain.setValueAtTime(0.2, now);
+  g.gain.exponentialRampToValueAtTime(0.001, now + dur);
+  osc.connect(g).connect(audioCtx.destination);
+  osc.start(now);
+  osc.stop(now + dur);
+
+  // Harmonic shimmer on higher chains
+  if (chain >= 3) {
+    const osc2 = audioCtx.createOscillator();
+    osc2.type = 'sine';
+    osc2.frequency.setValueAtTime(freq * 2, now);
+    const g2 = audioCtx.createGain();
+    g2.gain.setValueAtTime(0.1, now);
+    g2.gain.exponentialRampToValueAtTime(0.001, now + dur * 0.8);
+    osc2.connect(g2).connect(audioCtx.destination);
+    osc2.start(now);
+    osc2.stop(now + dur);
+  }
+}
+
+// Level-up fanfare
+function playLevelUpSound() {
+  const now = audioCtx.currentTime;
+  const notes = [523, 659, 784, 1047]; // C5 E5 G5 C6
+  notes.forEach((freq, i) => {
+    const t = now + i * 0.08;
+    const osc = audioCtx.createOscillator();
+    osc.type = 'triangle';
+    osc.frequency.setValueAtTime(freq, t);
+    const g = audioCtx.createGain();
+    g.gain.setValueAtTime(0, t);
+    g.gain.linearRampToValueAtTime(0.18, t + 0.02);
+    g.gain.exponentialRampToValueAtTime(0.001, t + 0.3);
+    osc.connect(g).connect(audioCtx.destination);
+    osc.start(t);
+    osc.stop(t + 0.3);
+  });
+}
+
 // ─── State ───────────────────────────────────────────────────────────────────
 let grid = [];
 let currentCol = Math.floor(GRID_COLS / 2);
@@ -146,25 +198,45 @@ let particles = [];
 let wallAdvanceTimer = 0;
 let wallAdvanceInterval = WALL_ADVANCE_INTERVAL_START;
 
+// Juice state
+let shakeTimer = 0;
+let shakeIntensity = 0;
+let freezeTimer = 0;
+
+// Progression
+let level = 1;
+let totalClearedCount = 0;
+let highScore = parseInt(localStorage.getItem('cubetris-best') || '0', 10);
+
 // ─── DOM refs ────────────────────────────────────────────────────────────────
 const scoreEl = document.getElementById('score-val');
+const bestEl = document.getElementById('best-val');
+const levelEl = document.getElementById('level-val');
 const finalScoreEl = document.getElementById('final-score');
+const finalBestEl = document.getElementById('final-best');
+const newBestEl = document.getElementById('new-best');
 const gameOverScreen = document.getElementById('game-over-screen');
 const restartBtn = document.getElementById('restart-btn');
 const nextColorBox = document.getElementById('next-color-box');
 const wallWarningEl = document.getElementById('wall-warning');
+const levelUpEl = document.getElementById('level-up');
 const uiEl = document.getElementById('ui');
+const tutorialEl = document.getElementById('tutorial');
+const tutorialBtn = document.getElementById('tutorial-btn');
+
+// Show high score in HUD
+bestEl.textContent = highScore;
 
 // ─── Score popups (floating "+N" at match positions) ─────────────────────────
-function spawnScorePopup(worldX, worldZ, points) {
+function spawnScorePopup(worldX, worldZ, label, isCombo) {
   const pos = new THREE.Vector3(worldX, 1, worldZ);
   pos.project(camera);
   const sx = (pos.x * 0.5 + 0.5) * window.innerWidth;
   const sy = (-pos.y * 0.5 + 0.5) * window.innerHeight;
 
   const el = document.createElement('div');
-  el.className = 'score-popup';
-  el.textContent = `+${points}`;
+  el.className = 'score-popup' + (isCombo ? ' combo' : '');
+  el.textContent = label;
   el.style.left = `${sx}px`;
   el.style.top = `${sy}px`;
   uiEl.appendChild(el);
@@ -192,6 +264,9 @@ camera.lookAt(centerX, 0, FIELD_DEPTH * 0.4); // angled down the corridor
 // Camera tracking state
 let cameraTargetX = centerX;
 const CAMERA_LERP_SPEED = 8; // how fast camera catches up
+// Base camera position (before shake offset)
+const cameraBaseY = 2.5;
+const cameraBaseZ = -6;
 
 const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setSize(window.innerWidth, window.innerHeight);
@@ -521,9 +596,49 @@ function applyGravity() {
   }
 }
 
-// ─── Chain-check ─────────────────────────────────────────────────────────────
+// ─── Screen shake + hit-freeze ───────────────────────────────────────────────
+function triggerShake(intensity, duration) {
+  shakeIntensity = Math.max(shakeIntensity, intensity);
+  shakeTimer = Math.max(shakeTimer, duration);
+}
+
+function triggerFreeze(duration) {
+  freezeTimer = Math.max(freezeTimer, duration);
+}
+
+// ─── Level progression ───────────────────────────────────────────────────────
+function checkLevelUp(clearedThisAction) {
+  totalClearedCount += clearedThisAction;
+  const newLevel = Math.floor(totalClearedCount / CLEARS_PER_LEVEL) + 1;
+  if (newLevel > level) {
+    level = newLevel;
+    levelEl.textContent = `Level ${level}`;
+
+    // Shift background hue slightly per level
+    const hue = 0.65 + (level - 1) * 0.04; // start blue-ish, shift toward purple/red
+    const sat = 0.3 + Math.min(level * 0.05, 0.4);
+    scene.background.setHSL(hue % 1, sat, 0.06 + Math.min(level * 0.005, 0.04));
+
+    // Show level-up announcement
+    levelUpEl.textContent = `LEVEL ${level}`;
+    levelUpEl.style.display = 'block';
+    levelUpEl.style.animation = 'none';
+    // Force reflow to restart animation
+    void levelUpEl.offsetWidth;
+    levelUpEl.style.animation = 'lvlup 1.4s ease-out forwards';
+    levelUpEl.addEventListener('animationend', () => {
+      levelUpEl.style.display = 'none';
+    }, { once: true });
+
+    playLevelUpSound();
+    triggerShake(0.15, 0.3);
+  }
+}
+
+// ─── Chain-check (with combo multiplier) ─────────────────────────────────────
 function resolveMatches() {
   let totalCleared = 0;
+  let chainStep = 0;
   let changed = true;
 
   while (changed) {
@@ -542,6 +657,7 @@ function resolveMatches() {
 
     if (toRemove.size > 0) {
       changed = true;
+      chainStep++;
       let sumX = 0, sumZ = 0, count = 0;
       toRemove.forEach((key) => {
         const [c, r] = key.split(',').map(Number);
@@ -556,13 +672,45 @@ function resolveMatches() {
         }
       });
       if (count > 0) {
-        spawnScorePopup(sumX / count, sumZ / count, count * 10);
+        const points = count * 10 * chainStep;
+        const isCombo = chainStep > 1;
+        const label = isCombo ? `+${points} x${chainStep}` : `+${points}`;
+        spawnScorePopup(sumX / count, sumZ / count, label, isCombo);
+        if (isCombo) playComboSound(chainStep);
       }
       applyGravity();
     }
   }
 
-  return totalCleared;
+  // Trigger juice based on what happened
+  if (totalCleared > 0) {
+    const bigClear = totalCleared >= 5;
+    const isChain = chainStep > 1;
+
+    if (bigClear || isChain) {
+      triggerFreeze(0.08); // 80ms hit-freeze
+      triggerShake(0.12 + chainStep * 0.06, 0.2 + chainStep * 0.05);
+    } else {
+      triggerShake(0.06, 0.12); // mild shake for any clear
+    }
+  }
+
+  return { totalCleared, chainStep };
+}
+
+// ─── Score handling ──────────────────────────────────────────────────────────
+function addScore(cleared, chainStep) {
+  // Sum up: each chain step multiplied by its step number
+  // But we can simplify since resolveMatches already calculates per-step
+  // Just use: cubes * 10 * average_chain ... or recalculate
+  // Actually the popup already shows the right number. Let's just total it:
+  // For chain of steps 1,2,3... each step clears some cubes.
+  // Simple approach: total = cleared * 10 * max(1, chainStep)
+  // This rewards chains heavily
+  const points = cleared * 10 * Math.max(1, chainStep);
+  score += points;
+  scoreEl.textContent = score;
+  checkLevelUp(cleared);
 }
 
 // ─── Shooting (cube flies forward into the corridor) ─────────────────────────
@@ -619,10 +767,9 @@ function updateShooting(dt) {
 
     placeCube(shootingCube.col, shootingCube.targetRow, shootingCube.colorIndex);
 
-    const cleared = resolveMatches();
-    if (cleared > 0) {
-      score += cleared * 10;
-      scoreEl.textContent = score;
+    const { totalCleared, chainStep } = resolveMatches();
+    if (totalCleared > 0) {
+      addScore(totalCleared, chainStep);
     }
 
     shootingCube = null;
@@ -656,10 +803,9 @@ function advanceWall() {
     placeCube(c, GRID_ROWS - 1, ci);
   }
 
-  const cleared = resolveMatches();
-  if (cleared > 0) {
-    score += cleared * 10;
-    scoreEl.textContent = score;
+  const { totalCleared, chainStep } = resolveMatches();
+  if (totalCleared > 0) {
+    addScore(totalCleared, chainStep);
   }
 
   wallAdvanceInterval = Math.max(WALL_ADVANCE_INTERVAL_MIN, wallAdvanceInterval - WALL_ADVANCE_SPEEDUP);
@@ -680,6 +826,16 @@ function checkGameOver() {
 function triggerGameOver() {
   gameOver = true;
   finalScoreEl.textContent = score;
+
+  const isNewBest = score > highScore;
+  if (isNewBest) {
+    highScore = score;
+    localStorage.setItem('cubetris-best', String(highScore));
+    bestEl.textContent = highScore;
+  }
+
+  finalBestEl.textContent = highScore;
+  newBestEl.style.display = isNewBest ? 'block' : 'none';
   gameOverScreen.style.display = 'flex';
 }
 
@@ -711,7 +867,6 @@ function restartGame() {
   }
 
   // Nuclear cleanup — remove any orphaned cube meshes that slipped through
-  // (e.g., wall advance shifted grid while a cube was in-flight)
   const keepers = new Set([spawnCube, columnHighlight]);
   for (let i = gameGroup.children.length - 1; i >= 0; i--) {
     const child = gameGroup.children[i];
@@ -731,13 +886,24 @@ function restartGame() {
   currentColorIndex = randomColorIndex();
   nextColorIndex = randomColorIndex();
 
+  // Reset juice state
+  shakeTimer = 0;
+  shakeIntensity = 0;
+  freezeTimer = 0;
+
+  // Reset progression
+  level = 1;
+  totalClearedCount = 0;
+  levelEl.textContent = 'Level 1';
+  scene.background.setHex(0x0a0a1a);
+
   updateSpawnCube();
   updateColumnHighlight();
   updateNextPreview();
 
   // Reset camera to center
   cameraTargetX = colToX(currentCol);
-  camera.position.x = cameraTargetX;
+  camera.position.set(cameraTargetX, cameraBaseY, cameraBaseZ);
 
   wallWarningEl.classList.remove('active');
   gameOverScreen.style.display = 'none';
@@ -865,6 +1031,17 @@ window.addEventListener('touchend', (e) => {
 
 restartBtn.addEventListener('click', restartGame);
 
+// ─── Tutorial ─────────────────────────────────────────────────────────────────
+const tutorialSeen = localStorage.getItem('cubetris-tutorial-seen');
+if (!tutorialSeen) {
+  tutorialEl.style.display = 'flex';
+}
+tutorialBtn.addEventListener('click', () => {
+  tutorialEl.style.display = 'none';
+  localStorage.setItem('cubetris-tutorial-seen', '1');
+  ensureAudio();
+});
+
 // ─── Resize ──────────────────────────────────────────────────────────────────
 window.addEventListener('resize', () => {
   camera.aspect = window.innerWidth / window.innerHeight;
@@ -885,7 +1062,13 @@ const clock = new THREE.Clock();
 function animate() {
   requestAnimationFrame(animate);
 
-  const dt = Math.min(clock.getDelta(), 0.05);
+  let dt = Math.min(clock.getDelta(), 0.05);
+
+  // Hit-freeze: pause game updates for a brief moment on big clears
+  if (freezeTimer > 0) {
+    freezeTimer -= dt;
+    dt = 0; // freeze everything this frame
+  }
 
   if (!gameOver) {
     updateShooting(dt);
@@ -920,6 +1103,23 @@ function animate() {
   // Smooth camera tracking — follow spawn cube's X position
   const lerpFactor = 1 - Math.exp(-CAMERA_LERP_SPEED * dt);
   camera.position.x += (cameraTargetX - camera.position.x) * lerpFactor;
+
+  // Screen shake offset
+  if (shakeTimer > 0) {
+    shakeTimer -= dt;
+    const t = shakeTimer > 0 ? shakeTimer : 0;
+    const decay = t / 0.3; // decays over shake duration
+    const ox = (Math.random() - 0.5) * shakeIntensity * decay * 2;
+    const oy = (Math.random() - 0.5) * shakeIntensity * decay * 2;
+    camera.position.y = cameraBaseY + oy;
+    camera.position.z = cameraBaseZ + ox;
+    if (shakeTimer <= 0) {
+      shakeIntensity = 0;
+      camera.position.y = cameraBaseY;
+      camera.position.z = cameraBaseZ;
+    }
+  }
+
   camera.lookAt(camera.position.x, 0, FIELD_DEPTH * 0.4);
 
   renderer.render(scene, camera);
