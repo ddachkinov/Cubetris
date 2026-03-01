@@ -240,6 +240,11 @@ function playRowClearSound() {
 }
 
 // ─── State ───────────────────────────────────────────────────────────────────
+// Progression (must be before randomColorIndex calls)
+let level = 1;
+let totalClearedCount = 0;
+let highScore = parseInt(localStorage.getItem('cubetris-best') || '0', 10);
+
 let grid = [];
 let currentCol = Math.floor(GRID_COLS / 2);
 let currentColorIndex = randomColorIndex();
@@ -257,11 +262,6 @@ let wallAdvanceInterval = WALL_ADVANCE_INTERVAL_START;
 let shakeTimer = 0;
 let shakeIntensity = 0;
 let freezeTimer = 0;
-
-// Progression
-let level = 1;
-let totalClearedCount = 0;
-let highScore = parseInt(localStorage.getItem('cubetris-best') || '0', 10);
 
 // Rainbow animation timer
 let rainbowTime = 0;
