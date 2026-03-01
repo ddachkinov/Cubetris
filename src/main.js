@@ -8,10 +8,9 @@ const COL_CELL = CUBE_SIZE;
 const DEPTH_CELL = CUBE_SIZE;
 const FIELD_DEPTH = GRID_ROWS * DEPTH_CELL;
 const SHOOT_SPEED = 15;
-const WALL_ADVANCE_INTERVAL_START = 15;
-const WALL_ADVANCE_INTERVAL_MIN = 5;
-const WALL_ADVANCE_SPEEDUP = 0.5;
-const CLEARS_PER_LEVEL = 15;
+const WALL_ADVANCE_INTERVAL_START = 12;
+const WALL_ADVANCE_INTERVAL_MIN = 2;
+const CLEARS_PER_LEVEL = 10;
 const ROW_CLEAR_BONUS = 200;
 const COLORS = [
   0xff4444, // red
@@ -256,7 +255,6 @@ let gameOver = false;
 let paused = false;
 let particles = [];
 let wallAdvanceTimer = 0;
-let wallAdvanceInterval = WALL_ADVANCE_INTERVAL_START;
 
 // Juice state
 let shakeTimer = 0;
@@ -523,9 +521,14 @@ function updateSpawnCube() {
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 function getActiveColorCount() {
-  if (level >= 5) return 5;
-  if (level >= 3) return 4;
+  if (level >= 4) return 5;
+  if (level >= 2) return 4;
   return 3;
+}
+
+function getWallInterval() {
+  // Tied to level: starts at 12s, drops ~0.8s per level, floors at 2s
+  return Math.max(WALL_ADVANCE_INTERVAL_MIN, WALL_ADVANCE_INTERVAL_START - (level - 1) * 0.8);
 }
 
 function randomColorIndex() {
@@ -592,13 +595,13 @@ function landingRow(col) {
   return GRID_ROWS - 1;
 }
 
-// ─── Adjacency detection (rainbow = wildcard) ────────────────────────────────
+// ─── Adjacency detection ─────────────────────────────────────────────────────
 function findMatchGroup(col, row) {
   const cell = grid[col][row];
   if (!cell) return [];
 
-  // Bombs don't participate in color matching
-  if (cell.colorIndex === BOMB_INDEX) return [];
+  // Specials don't participate in color flood-fill
+  if (cell.colorIndex === BOMB_INDEX || cell.colorIndex === RAINBOW_INDEX) return [];
 
   const targetColor = cell.colorIndex;
   const visited = new Set();
@@ -610,13 +613,8 @@ function findMatchGroup(col, row) {
     if (c < 0 || c >= GRID_COLS || r < 0 || r >= GRID_ROWS) return;
     const cell2 = grid[c][r];
     if (!cell2) return;
-    if (cell2.colorIndex === BOMB_INDEX) return; // bombs block flood
-
-    // Rainbow matches any color; any color matches rainbow
-    const matches = cell2.colorIndex === targetColor
-      || cell2.colorIndex === RAINBOW_INDEX
-      || targetColor === RAINBOW_INDEX;
-    if (!matches) return;
+    // Only match same color; skip specials
+    if (cell2.colorIndex !== targetColor) return;
 
     visited.add(key);
     group.push({ col: c, row: r });
@@ -781,6 +779,21 @@ function resolveMatches() {
   while (changed) {
     changed = false;
     const toRemove = new Set();
+
+    // 0. Rainbow activation: cross-clear (itself + 4 orthogonal neighbors)
+    for (let c = 0; c < GRID_COLS; c++) {
+      for (let r = 0; r < GRID_ROWS; r++) {
+        const cell = grid[c][r];
+        if (cell && cell.colorIndex === RAINBOW_INDEX) {
+          toRemove.add(`${c},${r}`);
+          [[c - 1, r], [c + 1, r], [c, r - 1], [c, r + 1]].forEach(([nc, nr]) => {
+            if (nc >= 0 && nc < GRID_COLS && nr >= 0 && nr < GRID_ROWS && grid[nc][nr]) {
+              toRemove.add(`${nc},${nr}`);
+            }
+          });
+        }
+      }
+    }
 
     // 1. Find color matches
     for (let c = 0; c < GRID_COLS; c++) {
@@ -990,8 +1003,6 @@ function advanceWall() {
     addScore(totalCleared, chainStep, totalRowClears);
   }
 
-  wallAdvanceInterval = Math.max(WALL_ADVANCE_INTERVAL_MIN, wallAdvanceInterval - WALL_ADVANCE_SPEEDUP);
-
   checkGameOver();
 }
 
@@ -1063,7 +1074,6 @@ function restartGame() {
   gameOver = false;
   paused = false;
   wallAdvanceTimer = 0;
-  wallAdvanceInterval = WALL_ADVANCE_INTERVAL_START;
   currentCol = Math.floor(GRID_COLS / 2);
 
   // Reset juice
@@ -1328,13 +1338,14 @@ function animate() {
     updateGhost();
 
     wallAdvanceTimer += dt;
-    const timeLeft = wallAdvanceInterval - wallAdvanceTimer;
+    const currentInterval = getWallInterval();
+    const timeLeft = currentInterval - wallAdvanceTimer;
     if (timeLeft <= 3 && timeLeft > 0) {
       wallWarningEl.classList.add('active');
     } else {
       wallWarningEl.classList.remove('active');
     }
-    if (wallAdvanceTimer >= wallAdvanceInterval) {
+    if (wallAdvanceTimer >= currentInterval) {
       wallAdvanceTimer = 0;
       wallWarningEl.classList.remove('active');
       advanceWall();
