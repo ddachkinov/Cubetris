@@ -935,6 +935,28 @@ function shoot() {
   updateNextPreview();
 }
 
+function quickDrop() {
+  if (gameOver || paused || shootingCube) return;
+
+  const row = landingRow(currentCol);
+  if (row < 0) return;
+
+  // Instant placement — no flight animation
+  placeCube(currentCol, row, currentColorIndex);
+
+  const { totalCleared, chainStep, totalRowClears } = resolveMatches();
+  if (totalCleared > 0) {
+    addScore(totalCleared, chainStep, totalRowClears);
+  }
+
+  currentColorIndex = nextColorIndex;
+  nextColorIndex = randomColorIndex();
+  updateSpawnCube();
+  updateNextPreview();
+
+  checkGameOver();
+}
+
 function updateShooting(dt) {
   if (!shootingCube) return;
 
@@ -1164,6 +1186,16 @@ window.addEventListener('keydown', (e) => {
     case 'Space':
       e.preventDefault();
       shoot();
+      break;
+    case 'ArrowUp':
+    case 'KeyW':
+      e.preventDefault();
+      quickDrop();
+      break;
+    case 'ArrowDown':
+    case 'KeyS':
+      e.preventDefault();
+      quickDrop();
       break;
   }
 });
