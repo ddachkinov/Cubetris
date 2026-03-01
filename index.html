@@ -1,0 +1,319 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Cubetris</title>
+    <style>
+      * { margin: 0; padding: 0; box-sizing: border-box; }
+      body { overflow: hidden; background: #111; font-family: 'Segoe UI', sans-serif; }
+      canvas { display: block; }
+      #ui {
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        pointer-events: none;
+      }
+      #hud {
+        position: absolute;
+        top: 20px;
+        left: 20px;
+        color: #fff;
+        font-size: 18px;
+      }
+      #hud span { display: block; margin-bottom: 6px; }
+      #hud .hud-best { color: rgba(255,255,255,0.45); font-size: 13px; }
+      #hud .hud-level { color: #7bf; font-size: 15px; font-weight: 700; }
+      #next-preview {
+        position: absolute;
+        top: 20px;
+        right: 20px;
+        width: 80px;
+        height: 80px;
+        border: 2px solid rgba(255,255,255,0.3);
+        border-radius: 8px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+      #next-color-box {
+        width: 50px;
+        height: 50px;
+        border-radius: 6px;
+      }
+      #next-label {
+        position: absolute;
+        top: 104px;
+        right: 20px;
+        width: 80px;
+        text-align: center;
+        color: rgba(255,255,255,0.6);
+        font-size: 12px;
+      }
+      /* Pause button */
+      #pause-btn {
+        position: absolute;
+        top: 20px;
+        right: 110px;
+        width: 40px;
+        height: 40px;
+        border: 2px solid rgba(255,255,255,0.3);
+        border-radius: 8px;
+        background: rgba(0,0,0,0.3);
+        color: rgba(255,255,255,0.7);
+        font-size: 18px;
+        cursor: pointer;
+        pointer-events: auto;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+      #pause-btn:hover { background: rgba(255,255,255,0.1); }
+      /* Pause screen */
+      #pause-screen {
+        display: none;
+        position: absolute;
+        top: 0; left: 0; width: 100%; height: 100%;
+        background: rgba(0,0,0,0.75);
+        color: #fff;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        pointer-events: auto;
+        z-index: 50;
+        gap: 16px;
+      }
+      #pause-screen h1 { font-size: 48px; margin-bottom: 10px; color: #7bf; }
+      #pause-screen button {
+        font-size: 20px;
+        padding: 12px 32px;
+        border: none;
+        border-radius: 6px;
+        background: #4a9eff;
+        color: #fff;
+        cursor: pointer;
+        min-width: 180px;
+      }
+      #pause-screen button:hover { background: #3a8eef; }
+      #pause-screen .btn-restart { background: #555; }
+      #pause-screen .btn-restart:hover { background: #666; }
+      /* Game over */
+      #game-over-screen {
+        display: none;
+        position: absolute;
+        top: 0; left: 0; width: 100%; height: 100%;
+        background: rgba(0,0,0,0.85);
+        color: #fff;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        pointer-events: auto;
+      }
+      #game-over-screen h1 { font-size: 48px; margin-bottom: 10px; }
+      #game-over-screen p { font-size: 24px; margin-bottom: 8px; }
+      #game-over-screen .best-line { font-size: 16px; color: rgba(255,255,255,0.5); margin-bottom: 6px; }
+      #new-best {
+        display: none;
+        font-size: 20px;
+        font-weight: 900;
+        color: #ffe055;
+        text-shadow: 0 0 12px rgba(255,224,85,0.6);
+        margin-bottom: 16px;
+        animation: best-pulse 0.6s ease-in-out infinite alternate;
+      }
+      @keyframes best-pulse {
+        from { transform: scale(1); }
+        to   { transform: scale(1.12); }
+      }
+      #game-over-screen button {
+        font-size: 20px;
+        padding: 12px 32px;
+        border: none;
+        border-radius: 6px;
+        background: #4a9eff;
+        color: #fff;
+        cursor: pointer;
+        margin-top: 10px;
+      }
+      #game-over-screen button:hover { background: #3a8eef; }
+      #column-indicator {
+        position: absolute;
+        bottom: 20px;
+        left: 50%;
+        transform: translateX(-50%);
+        color: rgba(255,255,255,0.6);
+        font-size: 14px;
+      }
+      /* Score popups */
+      .score-popup {
+        position: absolute;
+        pointer-events: none;
+        font-weight: 900;
+        font-size: 22px;
+        color: #ffe055;
+        text-shadow: 0 0 6px rgba(255,224,85,0.7), 0 1px 2px rgba(0,0,0,0.5);
+        animation: score-float 0.9s ease-out forwards;
+        z-index: 10;
+        white-space: nowrap;
+      }
+      .score-popup.combo {
+        font-size: 30px;
+        color: #ff6ef5;
+        text-shadow: 0 0 10px rgba(255,110,245,0.8), 0 0 20px rgba(255,110,245,0.4);
+      }
+      .score-popup.row-clear {
+        font-size: 28px;
+        color: #4f4;
+        text-shadow: 0 0 10px rgba(68,255,68,0.8), 0 0 20px rgba(68,255,68,0.4);
+      }
+      @keyframes score-float {
+        0%   { opacity: 1; transform: translateY(0) scale(1.2); }
+        30%  { opacity: 1; transform: translateY(-20px) scale(1); }
+        100% { opacity: 0; transform: translateY(-60px) scale(0.8); }
+      }
+      /* Level-up announcement */
+      #level-up {
+        display: none;
+        position: absolute;
+        top: 40%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        font-size: 42px;
+        font-weight: 900;
+        color: #7bf;
+        text-shadow: 0 0 20px rgba(119,187,255,0.7), 0 0 40px rgba(119,187,255,0.3);
+        pointer-events: none;
+        z-index: 15;
+        animation: lvlup 1.4s ease-out forwards;
+      }
+      @keyframes lvlup {
+        0%   { opacity: 0; transform: translate(-50%, -50%) scale(0.5); }
+        15%  { opacity: 1; transform: translate(-50%, -50%) scale(1.1); }
+        30%  { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+        75%  { opacity: 1; }
+        100% { opacity: 0; transform: translate(-50%, -60%) scale(0.9); }
+      }
+      /* Row clear banner */
+      #row-clear {
+        display: none;
+        position: absolute;
+        top: 48%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        font-size: 34px;
+        font-weight: 900;
+        color: #4f4;
+        text-shadow: 0 0 15px rgba(68,255,68,0.7), 0 0 30px rgba(68,255,68,0.3);
+        pointer-events: none;
+        z-index: 15;
+        white-space: nowrap;
+      }
+      @keyframes rowclear {
+        0%   { opacity: 0; transform: translate(-50%, -50%) scaleX(0.3); }
+        15%  { opacity: 1; transform: translate(-50%, -50%) scaleX(1.1); }
+        25%  { opacity: 1; transform: translate(-50%, -50%) scaleX(1); }
+        70%  { opacity: 1; }
+        100% { opacity: 0; }
+      }
+      /* Wall advance warning flash */
+      #wall-warning {
+        position: absolute;
+        top: 0; left: 0; width: 100%; height: 100%;
+        pointer-events: none;
+        border: 3px solid transparent;
+        box-sizing: border-box;
+        transition: border-color 0.15s;
+        z-index: 5;
+      }
+      #wall-warning.active {
+        border-color: rgba(255, 34, 34, 0.6);
+        animation: warn-pulse 0.6s ease-in-out infinite;
+      }
+      @keyframes warn-pulse {
+        0%, 100% { border-color: rgba(255, 34, 34, 0.15); }
+        50%      { border-color: rgba(255, 34, 34, 0.6); }
+      }
+      /* Tutorial overlay */
+      #tutorial {
+        display: none;
+        position: absolute;
+        top: 0; left: 0; width: 100%; height: 100%;
+        background: rgba(0,0,0,0.88);
+        color: #fff;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        pointer-events: auto;
+        z-index: 100;
+        text-align: center;
+        gap: 18px;
+      }
+      #tutorial h2 { font-size: 36px; color: #7bf; margin-bottom: 4px; }
+      #tutorial .tut-line { font-size: 18px; color: rgba(255,255,255,0.8); line-height: 1.6; }
+      #tutorial .tut-keys { font-size: 15px; color: rgba(255,255,255,0.5); }
+      #tutorial .tut-keys kbd {
+        display: inline-block;
+        padding: 2px 8px;
+        border: 1px solid rgba(255,255,255,0.3);
+        border-radius: 4px;
+        background: rgba(255,255,255,0.08);
+        font-family: inherit;
+        font-size: 14px;
+        margin: 0 2px;
+      }
+      #tutorial button {
+        font-size: 22px;
+        padding: 14px 40px;
+        border: none;
+        border-radius: 8px;
+        background: #4a9eff;
+        color: #fff;
+        cursor: pointer;
+        margin-top: 10px;
+        font-weight: 700;
+      }
+      #tutorial button:hover { background: #3a8eef; }
+    </style>
+  </head>
+  <body>
+    <div id="ui">
+      <div id="hud">
+        <span>Score: <strong id="score-val">0</strong></span>
+        <span class="hud-best">Best: <strong id="best-val">0</strong></span>
+        <span class="hud-level" id="level-val">Level 1</span>
+      </div>
+      <button id="pause-btn">| |</button>
+      <div id="next-preview">
+        <div id="next-color-box"></div>
+      </div>
+      <div id="next-label">NEXT</div>
+      <div id="wall-warning"></div>
+      <div id="level-up"></div>
+      <div id="row-clear"></div>
+      <div id="column-indicator">← A/D → move | SPACE shoot | W/S quick drop | ESC pause</div>
+      <div id="pause-screen">
+        <h1>PAUSED</h1>
+        <button id="resume-btn">Resume</button>
+        <button id="pause-restart-btn" class="btn-restart">Restart</button>
+      </div>
+      <div id="game-over-screen">
+        <h1>GAME OVER</h1>
+        <p>Score: <strong id="final-score">0</strong></p>
+        <p class="best-line">Best: <strong id="final-best">0</strong></p>
+        <div id="new-best">NEW BEST!</div>
+        <button id="restart-btn">Play Again</button>
+      </div>
+      <div id="tutorial">
+        <h2>CUBETRIS</h2>
+        <div class="tut-line">Shoot colored cubes down the corridor.<br>Match <strong>3 or more</strong> of the same color to clear them!</div>
+        <div class="tut-line">Chain combos for massive multipliers.</div>
+        <div class="tut-keys"><kbd>A</kbd> / <kbd>←</kbd> &nbsp; Move left &nbsp;&nbsp; <kbd>D</kbd> / <kbd>→</kbd> &nbsp; Move right &nbsp;&nbsp; <kbd>Space</kbd> &nbsp; Shoot &nbsp;&nbsp; <kbd>W</kbd> / <kbd>S</kbd> &nbsp; Quick drop &nbsp;&nbsp; <kbd>Esc</kbd> &nbsp; Pause</div>
+        <div class="tut-keys">Mobile: drag to move, tap to shoot</div>
+        <button id="tutorial-btn">GOT IT</button>
+      </div>
+    </div>
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>
