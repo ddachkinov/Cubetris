@@ -245,8 +245,8 @@ func _unhandled_input(event: InputEvent) -> void:
 		else:
 			if not touch_active:
 				return
-			var dy := event.position.y - touch_start_pos.y
-			var dx := event.position.x - touch_start_pos.x
+			var dy: float = event.position.y - touch_start_pos.y
+			var dx: float = event.position.x - touch_start_pos.x
 			if not touch_dragged and absf(dy) < 30.0 and absf(dx) < 30.0:
 				_shoot()
 			elif not touch_dragged and dy < -30.0:
@@ -257,7 +257,7 @@ func _unhandled_input(event: InputEvent) -> void:
 	if event is InputEventScreenDrag and touch_active:
 		if game_over or paused:
 			return
-		var dx := event.position.x - touch_start_pos.x
+		var dx: float = event.position.x - touch_start_pos.x
 		var col_shift := roundi(-dx / DRAG_COL_PX)
 		var new_col := clampi(touch_start_col + col_shift, 0, GRID_COLS - 1)
 		if new_col != current_col:
@@ -1197,7 +1197,7 @@ func _resolve_matches() -> Dictionary:
 			var sum_z := 0.0
 			var count := 0
 			for key in to_remove.keys():
-				var parts := key.split(",")
+				var parts: PackedStringArray = key.split(",")
 				var c := int(parts[0])
 				var r := int(parts[1])
 				var cell = grid[c][r]
@@ -1321,7 +1321,7 @@ func _update_particles(dt: float) -> void:
 
 		p["life"] -= dt
 		var fade_start := 0.4
-		var s := p["life"] / fade_start if p["life"] < fade_start else 1.0
+		var s: float = p["life"] / fade_start if p["life"] < fade_start else 1.0
 		s = maxf(0.0, s)
 		mesh.scale = Vector3(s, s, s)
 
