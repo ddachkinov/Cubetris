@@ -50,6 +50,15 @@ var spawn_scale_pop := 0.0
 # Particles
 var particles: Array = []
 
+# Score popups
+var score_popups: Array = []
+
+# Audio cooldowns (matches web version throttling)
+var last_explosion_time := 0.0
+const EXPLOSION_COOLDOWN := 0.04
+var last_bounce_time := 0.0
+const BOUNCE_COOLDOWN := 0.025
+
 # Touch
 var touch_start_pos: Vector2 = Vector2.ZERO
 var touch_start_col := 0
@@ -65,6 +74,7 @@ var column_highlight: MeshInstance3D
 var ghost_cube: MeshInstance3D
 var ghost_mat: StandardMaterial3D
 var camera: Camera3D
+var world_env: WorldEnvironment
 
 # Shared resources
 var cube_box_mesh: BoxMesh
@@ -143,6 +153,9 @@ func _process(delta: float) -> void:
 		if row_clear_timer <= 0.0:
 			row_clear_label.visible = false
 
+	# Score popups float upward and fade
+	_update_score_popups(dt)
+
 	if paused:
 		return
 
@@ -177,9 +190,11 @@ func _process(delta: float) -> void:
 	else:
 		spawn_cube.scale = Vector3.ONE
 
-	# Ghost pulse
+	# Ghost pulse (Color is value type — must reassign whole color)
 	if ghost_cube.visible:
-		ghost_mat.albedo_color.a = 0.18 + sin(Time.get_ticks_msec() * 0.005) * 0.1
+		var gc := ghost_mat.albedo_color
+		gc.a = 0.18 + sin(Time.get_ticks_msec() * 0.005) * 0.1
+		ghost_mat.albedo_color = gc
 
 	# Smooth camera tracking
 	var lerp_factor := 1.0 - exp(-CAMERA_LERP_SPEED * dt)
@@ -200,20 +215,22 @@ func _process(delta: float) -> void:
 	camera.look_at(Vector3(camera.position.x, 0.0, field_depth * 0.4))
 
 func _unhandled_input(event: InputEvent) -> void:
-	# Keyboard
+	# Keyboard — use event.is_action() (not Input.is_action_just_pressed)
 	if event is InputEventKey and event.pressed and not event.echo:
-		if event.keycode == KEY_ESCAPE:
+		if event.is_action("pause"):
 			_toggle_pause()
 			return
 		if game_over or paused:
 			return
-		if Input.is_action_just_pressed("move_left"):
+		if event.is_action("move_left"):
 			_move_column(1)  # Inverted to match web version's camera perspective
-		elif Input.is_action_just_pressed("move_right"):
+			_play_tick()
+		elif event.is_action("move_right"):
 			_move_column(-1)
-		elif Input.is_action_just_pressed("shoot"):
+			_play_tick()
+		elif event.is_action("shoot"):
 			_shoot()
-		elif Input.is_action_just_pressed("quick_drop"):
+		elif event.is_action("quick_drop"):
 			_quick_drop()
 
 	# Touch input
@@ -251,12 +268,13 @@ func _unhandled_input(event: InputEvent) -> void:
 			_update_ghost()
 			spawn_scale_pop = 1.0
 			_play_tick()
+			Input.vibrate_handheld(12)
 
 ## ─── Shared resources ────────────────────────────────────────────────────────
 
 func _create_shared_resources() -> void:
 	cube_box_mesh = BoxMesh.new()
-	cube_box_mesh.size = Vector3(CUBE_SIZE * 0.92, CUBE_SIZE * 0.92, CUBE_SIZE * 0.92)
+	cube_box_mesh.size = Vector3(CUBE_SIZE, CUBE_SIZE, CUBE_SIZE)
 
 	for color in CUBE_COLORS:
 		var mat := StandardMaterial3D.new()
@@ -291,7 +309,7 @@ func _setup_environment() -> void:
 	env.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
 	env.ambient_light_color = Color("8888cc")
 	env.ambient_light_energy = 0.4
-	var world_env := WorldEnvironment.new()
+	world_env = WorldEnvironment.new()
 	world_env.environment = env
 	add_child(world_env)
 
@@ -314,6 +332,7 @@ func _setup_lights() -> void:
 	dir_light.position = Vector3(center_x, 8.0, -2.0)
 	dir_light.look_at(Vector3(center_x, 0.0, field_depth / 2.0))
 	dir_light.light_energy = 1.0
+	dir_light.shadow_enabled = true
 	add_child(dir_light)
 
 	var back_light := OmniLight3D.new()
@@ -355,13 +374,16 @@ func _setup_scene_nodes() -> void:
 	# PlaneMesh in Godot faces +Y by default, so rotation needed to lie flat is already correct
 	game_group.add_child(column_highlight)
 
-	# Ghost cube (wireframe preview at landing position)
+	# Ghost cube (wireframe-style preview at landing position, 0.98 scale like web)
+	var ghost_box := BoxMesh.new()
+	ghost_box.size = Vector3(CUBE_SIZE * 0.98, CUBE_SIZE * 0.98, CUBE_SIZE * 0.98)
 	ghost_cube = MeshInstance3D.new()
-	ghost_cube.mesh = cube_box_mesh
+	ghost_cube.mesh = ghost_box
 	ghost_mat = StandardMaterial3D.new()
 	ghost_mat.albedo_color = Color(1.0, 1.0, 1.0, 0.25)
 	ghost_mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
 	ghost_mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	ghost_mat.no_depth_test = true
 	ghost_cube.material_override = ghost_mat
 	ghost_cube.visible = false
 	game_group.add_child(ghost_cube)
@@ -425,15 +447,19 @@ func _create_corridor() -> void:
 	var center_x := grid_width / 2.0 - CUBE_SIZE / 2.0
 	var floor_y := -CUBE_SIZE / 2.0
 
-	# Ground plane
+	# Ground plane — match web: (gridWidth + EXTRA_COLS*2 + 4) × (FIELD_DEPTH + EXTRA_ROWS + 8)
+	var extra_cols := 6
+	var extra_rows := 3
 	var ground := MeshInstance3D.new()
 	var ground_mesh := PlaneMesh.new()
-	ground_mesh.size = Vector2(grid_width + 12.0, field_depth + 8.0)
+	ground_mesh.size = Vector2(grid_width + extra_cols * 2.0 * CUBE_SIZE + 4.0,
+							   field_depth + extra_rows * CUBE_SIZE + 8.0)
 	ground.mesh = ground_mesh
 	var ground_mat := StandardMaterial3D.new()
 	ground_mat.albedo_color = Color("111122")
 	ground.material_override = ground_mat
-	ground.position = Vector3(center_x, floor_y, field_depth / 2.0)
+	ground.position = Vector3(center_x, floor_y,
+							  (field_depth + extra_rows * CUBE_SIZE) / 2.0 - 1.0)
 	game_group.add_child(ground)
 
 	# Side wall lines (vertical posts + top rail)
@@ -510,9 +536,26 @@ func _generate_tone_wav(freq: float, duration: float, wave_type: String = "sine"
 	return wav
 
 func _play_explosion() -> void:
+	var now := Time.get_ticks_msec() / 1000.0
+	if now - last_explosion_time < EXPLOSION_COOLDOWN:
+		return
+	last_explosion_time = now
 	audio_explosion.stream = _generate_noise_wav(0.25)
 	audio_explosion.volume_db = -8.0
 	audio_explosion.play()
+
+func _play_bounce(velocity: float) -> void:
+	var now := Time.get_ticks_msec() / 1000.0
+	if now - last_bounce_time < BOUNCE_COOLDOWN:
+		return
+	last_bounce_time = now
+	var vol := minf(0.18, absf(velocity) * 0.03)
+	if vol < 0.005:
+		return
+	var freq := 3000.0 + randf() * 2000.0 + absf(velocity) * 200.0
+	audio_bounce.stream = _generate_tone_wav(freq, 0.035, "sine")
+	audio_bounce.volume_db = linear_to_db(vol)
+	audio_bounce.play()
 
 func _play_combo(chain: int) -> void:
 	var base_note := 523.0
@@ -867,6 +910,22 @@ func _create_cube_mesh(color_index: int) -> MeshInstance3D:
 
 ## ─── Helpers ─────────────────────────────────────────────────────────────────
 
+## Godot only has HSV; Three.js setHSL uses HSL. Convert HSL→RGB directly.
+static func _color_from_hsl(h: float, s: float, l: float) -> Color:
+	var c := (1.0 - absf(2.0 * l - 1.0)) * s
+	var x := c * (1.0 - absf(fmod(h * 6.0, 2.0) - 1.0))
+	var m := l - c / 2.0
+	var r := 0.0; var g := 0.0; var b := 0.0
+	var sector := int(h * 6.0) % 6
+	match sector:
+		0: r = c; g = x; b = 0.0
+		1: r = x; g = c; b = 0.0
+		2: r = 0.0; g = c; b = x
+		3: r = 0.0; g = x; b = c
+		4: r = x; g = 0.0; b = c
+		5: r = c; g = 0.0; b = x
+	return Color(r + m, g + m, b + m)
+
 func _get_active_color_count() -> int:
 	if level >= 4:
 		return 5
@@ -932,7 +991,8 @@ func _update_ghost() -> void:
 
 func _update_next_preview() -> void:
 	if next_color_index == RAINBOW_INDEX:
-		next_color_rect.color = Color.WHITE
+		# Animate rainbow in _process — set a flag color to detect
+		next_color_rect.color = Color.MAGENTA  # placeholder, animated per-frame
 	elif next_color_index == BOMB_INDEX:
 		next_color_rect.color = Color("ff6600")
 	else:
@@ -1133,18 +1193,30 @@ func _resolve_matches() -> Dictionary:
 					total_row_clears += 1
 
 			# Process removals
+			var sum_x := 0.0
+			var sum_z := 0.0
+			var count := 0
 			for key in to_remove.keys():
 				var parts := key.split(",")
 				var c := int(parts[0])
 				var r := int(parts[1])
 				var cell = grid[c][r]
 				if cell != null:
+					sum_x += _col_to_x(c)
+					sum_z += _row_to_z(r)
+					count += 1
 					_spawn_particles(c, r, cell["color_index"])
 					_remove_cube(c, r)
 					total_cleared += 1
 
-			if chain_step > 1:
-				_play_combo(chain_step)
+			# Score popup at average position of cleared cubes
+			if count > 0:
+				var points := count * 10 * chain_step
+				var is_combo := chain_step > 1
+				var popup_text := "+%d x%d" % [points, chain_step] if is_combo else "+%d" % points
+				_spawn_score_popup(sum_x / count, sum_z / count, popup_text, is_combo)
+				if is_combo:
+					_play_combo(chain_step)
 
 			_apply_gravity()
 
@@ -1238,6 +1310,7 @@ func _update_particles(dt: float) -> void:
 		p["vy"] -= 12.0 * dt
 
 		if mesh.position.y <= p["floor_y"] and p["vy"] < 0.0:
+			_play_bounce(p["vy"])
 			mesh.position.y = p["floor_y"]
 			p["vy"] = -p["vy"] * p["bounce_damping"]
 			p["vx"] *= 0.8
@@ -1258,6 +1331,39 @@ func _update_particles(dt: float) -> void:
 			particles.remove_at(i)
 		i -= 1
 
+## ─── Score popups ────────────────────────────────────────────────────────────
+
+func _spawn_score_popup(world_x: float, world_z: float, text: String, is_combo: bool) -> void:
+	# Project 3D position to screen space
+	var world_pos := Vector3(world_x, 1.0, world_z)
+	if not camera.is_position_behind(world_pos):
+		var screen_pos := camera.unproject_position(world_pos)
+		var label := Label.new()
+		label.text = text
+		label.add_theme_font_size_override("font_size", 22 if is_combo else 18)
+		label.add_theme_color_override("font_color", Color("ffcc00") if is_combo else Color.WHITE)
+		label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		label.position = screen_pos - Vector2(40, 10)
+		ui_layer.add_child(label)
+		score_popups.append({ "label": label, "life": 1.0 })
+
+func _update_score_popups(dt: float) -> void:
+	var i := score_popups.size() - 1
+	while i >= 0:
+		var p: Dictionary = score_popups[i]
+		var label: Label = p["label"]
+		p["life"] -= dt
+		# Float upward
+		label.position.y -= 60.0 * dt
+		# Fade out
+		var alpha := clampf(p["life"] / 0.4, 0.0, 1.0)
+		label.modulate.a = alpha
+		if p["life"] <= 0.0:
+			ui_layer.remove_child(label)
+			label.queue_free()
+			score_popups.remove_at(i)
+		i -= 1
+
 ## ─── Special cube visuals ────────────────────────────────────────────────────
 
 func _update_special_visuals(dt: float) -> void:
@@ -1274,8 +1380,8 @@ func _update_special_visuals(dt: float) -> void:
 
 			if ci == RAINBOW_INDEX:
 				var hue := fmod(rainbow_time * 0.5 + c * 0.1 + r * 0.05, 1.0)
-				mat.albedo_color = Color.from_hsv(hue, 0.7, 0.7)
-				mat.emission = Color.from_hsv(hue, 1.0, 0.15)
+				mat.albedo_color = _color_from_hsl(hue, 0.7, 0.7)
+				mat.emission = _color_from_hsl(hue, 1.0, 0.15)
 
 			if ci == BOMB_INDEX:
 				var pulse := sin(rainbow_time * 4.0) * 0.5 + 0.5
@@ -1285,11 +1391,16 @@ func _update_special_visuals(dt: float) -> void:
 	var spawn_mat: StandardMaterial3D = spawn_cube.material_override
 	if current_color_index == RAINBOW_INDEX:
 		var hue := fmod(rainbow_time * 0.5, 1.0)
-		spawn_mat.albedo_color = Color.from_hsv(hue, 0.7, 0.7)
-		spawn_mat.emission = Color.from_hsv(hue, 1.0, 0.15)
+		spawn_mat.albedo_color = _color_from_hsl(hue, 0.7, 0.7)
+		spawn_mat.emission = _color_from_hsl(hue, 1.0, 0.15)
 	elif current_color_index == BOMB_INDEX:
 		var pulse := sin(rainbow_time * 4.0) * 0.5 + 0.5
 		spawn_mat.emission = Color(0.3 * pulse, 0.15 * pulse, 0.0)
+
+	# Next preview rainbow cycling
+	if next_color_index == RAINBOW_INDEX:
+		var hue := fmod(rainbow_time * 0.8, 1.0)
+		next_color_rect.color = _color_from_hsl(hue, 0.9, 0.6)
 
 ## ─── Wall advancement ────────────────────────────────────────────────────────
 
@@ -1350,6 +1461,13 @@ func _check_level_up(cleared_this_action: int) -> void:
 	if new_level > level:
 		level = new_level
 		level_label.text = "Level %d" % level
+
+		# Background color shifts per level (matches web version)
+		var hue := fmod(0.65 + (level - 1) * 0.04, 1.0)
+		var sat := 0.3 + minf(level * 0.05, 0.4)
+		var lum := 0.06 + minf(level * 0.005, 0.04)
+		world_env.environment.background_color = _color_from_hsl(hue, sat, lum)
+
 		level_up_label.text = "LEVEL %d" % level
 		level_up_label.visible = true
 		level_up_timer = 1.4
@@ -1410,6 +1528,13 @@ func _restart_game() -> void:
 		mesh.queue_free()
 	particles.clear()
 
+	# Clear score popups
+	for p in score_popups:
+		var label: Label = p["label"]
+		ui_layer.remove_child(label)
+		label.queue_free()
+	score_popups.clear()
+
 	# Clear shooting cube
 	if shooting_active:
 		var mesh: MeshInstance3D = shooting_cube_data["mesh"]
@@ -1429,6 +1554,7 @@ func _restart_game() -> void:
 	level = 1
 	total_cleared = 0
 	level_label.text = "Level 1"
+	world_env.environment.background_color = Color("0a0a1a")
 
 	wall_warning_label.visible = false
 	game_over_panel.visible = false
