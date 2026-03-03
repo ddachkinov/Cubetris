@@ -846,9 +846,9 @@ func _load_high_score() -> void:
 
 func _save_high_score() -> void:
 	var config := ConfigFile.new()
-	config.load(SAVE_PATH)  # load existing to preserve other keys
+	var _err := config.load(SAVE_PATH)  # load existing to preserve other keys
 	config.set_value("game", "high_score", high_score)
-	config.save(SAVE_PATH)
+	_err = config.save(SAVE_PATH)
 
 func _has_seen_tutorial() -> bool:
 	var config := ConfigFile.new()
@@ -858,9 +858,9 @@ func _has_seen_tutorial() -> bool:
 
 func _mark_tutorial_seen() -> void:
 	var config := ConfigFile.new()
-	config.load(SAVE_PATH)
+	var _err := config.load(SAVE_PATH)
 	config.set_value("game", "tutorial_seen", true)
-	config.save(SAVE_PATH)
+	_err = config.save(SAVE_PATH)
 
 ## ─── Grid operations ─────────────────────────────────────────────────────────
 
@@ -1457,6 +1457,7 @@ func _add_score(cleared: int, chain: int, row_clears: int) -> void:
 
 func _check_level_up(cleared_this_action: int) -> void:
 	total_cleared += cleared_this_action
+	@warning_ignore("integer_division")
 	var new_level := total_cleared / CLEARS_PER_LEVEL + 1
 	if new_level > level:
 		level = new_level
@@ -1497,6 +1498,7 @@ func _trigger_game_over() -> void:
 	game_over_panel.visible = true
 
 func _new_game() -> void:
+	@warning_ignore("integer_division")
 	current_col = GRID_COLS / 2
 	current_color_index = _random_color_index()
 	next_color_index = _random_color_index()
@@ -1505,7 +1507,6 @@ func _new_game() -> void:
 	_update_next_preview()
 	_update_ghost()
 
-	var grid_width := GRID_COLS * CUBE_SIZE
 	camera_target_x = _col_to_x(current_col)
 	camera.position.x = camera_target_x
 
