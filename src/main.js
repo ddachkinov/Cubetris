@@ -12,6 +12,10 @@ const WALL_ADVANCE_INTERVAL_START = 12;
 const WALL_ADVANCE_INTERVAL_MIN = 2;
 const CLEARS_PER_LEVEL = 10;
 const ROW_CLEAR_BONUS = 200;
+const ZONE_CHARGE_MAX = 100;
+const ZONE_CHARGE_PER_CLEAR = 5;
+const ZONE_DURATION = 8; // seconds
+const ZONE_TIME_SCALE = 0.15; // 15% speed during zone
 const COLORS = [
   0xff4444, // red
   0x44bb44, // green
@@ -238,6 +242,110 @@ function playRowClearSound() {
   osc.stop(now + 0.3);
 }
 
+// ─── Zone activation sound ──────────────────────────────────────────────────
+function playZoneActivateSound() {
+  const now = audioCtx.currentTime;
+  // Ascending whoosh
+  const osc = audioCtx.createOscillator();
+  osc.type = 'sine';
+  osc.frequency.setValueAtTime(200, now);
+  osc.frequency.exponentialRampToValueAtTime(1200, now + 0.4);
+  const g = audioCtx.createGain();
+  g.gain.setValueAtTime(0.25, now);
+  g.gain.linearRampToValueAtTime(0.15, now + 0.2);
+  g.gain.exponentialRampToValueAtTime(0.001, now + 0.6);
+  osc.connect(g).connect(audioCtx.destination);
+  osc.start(now);
+  osc.stop(now + 0.6);
+
+  // Shimmering pad
+  const osc2 = audioCtx.createOscillator();
+  osc2.type = 'triangle';
+  osc2.frequency.setValueAtTime(800, now);
+  osc2.frequency.linearRampToValueAtTime(1000, now + 0.5);
+  const g2 = audioCtx.createGain();
+  g2.gain.setValueAtTime(0.12, now);
+  g2.gain.exponentialRampToValueAtTime(0.001, now + 0.8);
+  osc2.connect(g2).connect(audioCtx.destination);
+  osc2.start(now);
+  osc2.stop(now + 0.8);
+}
+
+function playZoneDeactivateSound() {
+  const now = audioCtx.currentTime;
+  const osc = audioCtx.createOscillator();
+  osc.type = 'sine';
+  osc.frequency.setValueAtTime(800, now);
+  osc.frequency.exponentialRampToValueAtTime(200, now + 0.3);
+  const g = audioCtx.createGain();
+  g.gain.setValueAtTime(0.2, now);
+  g.gain.exponentialRampToValueAtTime(0.001, now + 0.4);
+  osc.connect(g).connect(audioCtx.destination);
+  osc.start(now);
+  osc.stop(now + 0.4);
+}
+
+// ─── Enhanced chain combo sounds (pitch + harmony escalation) ───────────────
+function playChainSound(chainStep) {
+  const now = audioCtx.currentTime;
+  const baseNote = 523; // C5
+  const freq = baseNote * Math.pow(2, (chainStep - 1) * 2 / 12);
+  const vol = Math.min(0.3, 0.15 + chainStep * 0.03);
+  const dur = 0.12 + chainStep * 0.02;
+
+  // Primary tone - escalating pitch
+  const osc = audioCtx.createOscillator();
+  osc.type = 'triangle';
+  osc.frequency.setValueAtTime(freq, now);
+  osc.frequency.exponentialRampToValueAtTime(freq * 1.5, now + dur * 0.3);
+  const g = audioCtx.createGain();
+  g.gain.setValueAtTime(vol, now);
+  g.gain.exponentialRampToValueAtTime(0.001, now + dur);
+  osc.connect(g).connect(audioCtx.destination);
+  osc.start(now);
+  osc.stop(now + dur);
+
+  // Harmony - fifth above at chain >= 2
+  if (chainStep >= 2) {
+    const osc2 = audioCtx.createOscillator();
+    osc2.type = 'sine';
+    osc2.frequency.setValueAtTime(freq * 1.5, now);
+    const g2 = audioCtx.createGain();
+    g2.gain.setValueAtTime(vol * 0.5, now);
+    g2.gain.exponentialRampToValueAtTime(0.001, now + dur * 0.8);
+    osc2.connect(g2).connect(audioCtx.destination);
+    osc2.start(now);
+    osc2.stop(now + dur);
+  }
+
+  // Octave + sparkle at chain >= 3
+  if (chainStep >= 3) {
+    const osc3 = audioCtx.createOscillator();
+    osc3.type = 'sine';
+    osc3.frequency.setValueAtTime(freq * 2, now);
+    osc3.frequency.exponentialRampToValueAtTime(freq * 2.5, now + dur * 0.5);
+    const g3 = audioCtx.createGain();
+    g3.gain.setValueAtTime(vol * 0.3, now);
+    g3.gain.exponentialRampToValueAtTime(0.001, now + dur);
+    osc3.connect(g3).connect(audioCtx.destination);
+    osc3.start(now);
+    osc3.stop(now + dur);
+  }
+
+  // Deep resonance at chain >= 4
+  if (chainStep >= 4) {
+    const osc4 = audioCtx.createOscillator();
+    osc4.type = 'sine';
+    osc4.frequency.setValueAtTime(freq * 0.5, now);
+    const g4 = audioCtx.createGain();
+    g4.gain.setValueAtTime(vol * 0.4, now);
+    g4.gain.exponentialRampToValueAtTime(0.001, now + dur * 1.2);
+    osc4.connect(g4).connect(audioCtx.destination);
+    osc4.start(now);
+    osc4.stop(now + dur * 1.2);
+  }
+}
+
 // ─── State ───────────────────────────────────────────────────────────────────
 // Progression (must be before randomColorIndex calls)
 let level = 1;
@@ -264,6 +372,25 @@ let freezeTimer = 0;
 // Rainbow animation timer
 let rainbowTime = 0;
 
+// Zone (time-freeze) power-up state
+let zoneCharge = 0;
+let zoneActive = false;
+let zoneTimer = 0;
+let zoneClearedInZone = 0; // cubes cleared during zone for bonus
+
+// Dynamic intensity state
+let intensityLevel = 0; // 0-1 scale based on recent activity
+let lastChainStep = 0;
+let flashTimer = 0;
+let flashColor = 0xffffff;
+
+// Chain counter display state
+let chainDisplayTimer = 0;
+let chainDisplayStep = 0;
+
+// Shooting trail particles
+let trailParticles = [];
+
 // ─── DOM refs ────────────────────────────────────────────────────────────────
 const scoreEl = document.getElementById('score-val');
 const bestEl = document.getElementById('best-val');
@@ -284,6 +411,11 @@ const pauseBtn = document.getElementById('pause-btn');
 const pauseScreen = document.getElementById('pause-screen');
 const resumeBtn = document.getElementById('resume-btn');
 const pauseRestartBtn = document.getElementById('pause-restart-btn');
+const zoneBarFill = document.getElementById('zone-fill');
+const zoneBarContainer = document.getElementById('zone-bar');
+const zoneBannerEl = document.getElementById('zone-banner');
+const chainCounterEl = document.getElementById('chain-counter');
+const flashOverlayEl = document.getElementById('flash-overlay');
 
 bestEl.textContent = highScore;
 
@@ -635,7 +767,9 @@ function spawnParticles(col, row, colorIndex) {
   const cx = colToX(col);
   const cz = rowToZ(row);
   const floorY = -CUBE_SIZE / 2;
-  const count = colorIndex === BOMB_INDEX ? 8 : 14;
+  // Particle count scales with intensity level
+  const baseCount = colorIndex === BOMB_INDEX ? 8 : 14;
+  const count = Math.round(baseCount * (1 + intensityLevel * 0.5));
   for (let i = 0; i < count; i++) {
     let pColor;
     if (colorIndex === RAINBOW_INDEX) {
@@ -654,7 +788,8 @@ function spawnParticles(col, row, colorIndex) {
     gameGroup.add(mesh);
 
     const angle = (Math.PI * 2 * i) / count + Math.random() * 0.3;
-    const speed = colorIndex === BOMB_INDEX ? (3.5 + Math.random() * 4) : (2.5 + Math.random() * 3.5);
+    const speedMult = 1 + intensityLevel * 0.4;
+    const speed = (colorIndex === BOMB_INDEX ? (3.5 + Math.random() * 4) : (2.5 + Math.random() * 3.5)) * speedMult;
     particles.push({
       mesh,
       vx: Math.cos(angle) * speed,
@@ -726,6 +861,170 @@ function triggerShake(intensity, duration) {
 
 function triggerFreeze(duration) {
   freezeTimer = Math.max(freezeTimer, duration);
+}
+
+// ─── Flash overlay (screen flash on big clears) ─────────────────────────────
+function triggerFlash(color, intensity) {
+  flashOverlayEl.style.background = '#' + color.toString(16).padStart(6, '0');
+  flashOverlayEl.style.opacity = intensity;
+  flashTimer = 0.15;
+}
+
+// ─── Zone power-up ──────────────────────────────────────────────────────────
+function updateZoneBar() {
+  const pct = Math.min(100, (zoneCharge / ZONE_CHARGE_MAX) * 100);
+  zoneBarFill.style.height = pct + '%';
+  if (zoneActive) {
+    zoneBarContainer.className = 'active';
+    const zonePct = Math.min(100, (zoneTimer / ZONE_DURATION) * 100);
+    zoneBarFill.style.height = zonePct + '%';
+  } else if (zoneCharge >= ZONE_CHARGE_MAX) {
+    zoneBarContainer.className = 'charged';
+  } else {
+    zoneBarContainer.className = '';
+  }
+}
+
+function activateZone() {
+  if (zoneCharge < ZONE_CHARGE_MAX || zoneActive || gameOver || paused) return;
+  zoneActive = true;
+  zoneTimer = ZONE_DURATION;
+  zoneCharge = 0;
+  zoneClearedInZone = 0;
+  document.body.classList.add('zone-active');
+
+  zoneBannerEl.textContent = 'Z O N E';
+  zoneBannerEl.style.display = 'block';
+  zoneBannerEl.style.animation = 'none';
+  void zoneBannerEl.offsetWidth;
+  zoneBannerEl.style.animation = 'zone-activate 1.4s ease-out forwards';
+  zoneBannerEl.addEventListener('animationend', () => {
+    zoneBannerEl.style.display = 'none';
+  }, { once: true });
+
+  playZoneActivateSound();
+  triggerShake(0.2, 0.3);
+  triggerFlash(0xffcc00, 0.25);
+  updateZoneBar();
+}
+
+function deactivateZone() {
+  zoneActive = false;
+  document.body.classList.remove('zone-active');
+  playZoneDeactivateSound();
+
+  // Bonus score for cubes cleared during zone
+  if (zoneClearedInZone > 0) {
+    const bonus = zoneClearedInZone * 15;
+    score += bonus;
+    scoreEl.textContent = score;
+    spawnScorePopup(colToX(3), rowToZ(6), `ZONE +${bonus}`, 'combo');
+  }
+  updateZoneBar();
+}
+
+function chargeZone(clearedCount) {
+  if (zoneActive) {
+    zoneClearedInZone += clearedCount;
+    return;
+  }
+  zoneCharge = Math.min(ZONE_CHARGE_MAX, zoneCharge + clearedCount * ZONE_CHARGE_PER_CLEAR);
+  updateZoneBar();
+}
+
+// ─── Chain counter display ──────────────────────────────────────────────────
+function showChainCounter(step) {
+  if (step < 2) return;
+  chainDisplayStep = step;
+  chainDisplayTimer = 1.2;
+
+  const labels = ['', '', 'DOUBLE', 'TRIPLE', 'QUAD', 'PENTA', 'HEXA', 'MEGA', 'ULTRA', 'INSANE'];
+  const label = step < labels.length ? labels[step] : `${step}x CHAIN`;
+
+  chainCounterEl.textContent = `${label}!`;
+  chainCounterEl.style.display = 'block';
+  chainCounterEl.style.animation = 'none';
+  void chainCounterEl.offsetWidth;
+
+  // Color escalation based on chain step
+  const colors = ['', '', '#ff6ef5', '#ff4444', '#ffcc00', '#44ff88', '#4488ff', '#ffffff'];
+  const color = step < colors.length ? colors[step] : '#ffffff';
+  chainCounterEl.style.color = color;
+  chainCounterEl.style.textShadow = `0 0 20px ${color}, 0 0 40px ${color}`;
+  chainCounterEl.style.fontSize = Math.min(72, 40 + step * 8) + 'px';
+
+  chainCounterEl.style.animation = 'chain-pop 1.2s ease-out forwards';
+  chainCounterEl.addEventListener('animationend', () => {
+    chainCounterEl.style.display = 'none';
+  }, { once: true });
+}
+
+// ─── Shooting trail particles ───────────────────────────────────────────────
+function spawnTrailParticle(x, y, z, color) {
+  const size = 0.06 + Math.random() * 0.08;
+  const geo = new THREE.BoxGeometry(size, size, size);
+  const mat = new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.8 });
+  const mesh = new THREE.Mesh(geo, mat);
+  mesh.position.set(x + (Math.random() - 0.5) * 0.3, y + (Math.random() - 0.5) * 0.3, z);
+  gameGroup.add(mesh);
+  trailParticles.push({
+    mesh,
+    life: 0.3 + Math.random() * 0.2,
+    maxLife: 0.3 + Math.random() * 0.2,
+    vy: (Math.random() - 0.5) * 0.5,
+    vx: (Math.random() - 0.5) * 0.5,
+  });
+}
+
+function updateTrailParticles(dt) {
+  for (let i = trailParticles.length - 1; i >= 0; i--) {
+    const p = trailParticles[i];
+    p.life -= dt;
+    p.mesh.position.x += p.vx * dt;
+    p.mesh.position.y += p.vy * dt;
+    const alpha = Math.max(0, p.life / p.maxLife);
+    p.mesh.material.opacity = alpha * 0.8;
+    p.mesh.scale.setScalar(alpha);
+    if (p.life <= 0) {
+      gameGroup.remove(p.mesh);
+      p.mesh.geometry.dispose();
+      p.mesh.material.dispose();
+      trailParticles.splice(i, 1);
+    }
+  }
+}
+
+// ─── Dynamic intensity ──────────────────────────────────────────────────────
+function updateDynamicIntensity(dt, chainStep) {
+  // Intensity spikes on chains, decays over time
+  const targetIntensity = Math.min(1, chainStep * 0.25);
+  if (targetIntensity > intensityLevel) {
+    intensityLevel = targetIntensity;
+  } else {
+    intensityLevel = Math.max(0, intensityLevel - dt * 0.3);
+  }
+
+  // Ambient light reacts to intensity
+  ambientLight.intensity = 0.4 + intensityLevel * 0.4;
+
+  // Directional light pulses
+  dirLight.intensity = 1.0 + intensityLevel * 0.5;
+
+  // Back light color shifts toward warm during intensity
+  const r = 0.27 + intensityLevel * 0.5;
+  const g = 0.4 - intensityLevel * 0.2;
+  const b = 1.0 - intensityLevel * 0.4;
+  backLight.color.setRGB(r, g, b);
+
+  // Flash overlay decay
+  if (flashTimer > 0) {
+    flashTimer -= dt;
+    if (flashTimer <= 0) {
+      flashOverlayEl.style.opacity = 0;
+    } else {
+      flashOverlayEl.style.opacity = parseFloat(flashOverlayEl.style.opacity) * 0.85;
+    }
+  }
 }
 
 // ─── Level progression ───────────────────────────────────────────────────────
@@ -871,7 +1170,14 @@ function resolveMatches() {
         const isCombo = chainStep > 1;
         const label = isCombo ? `+${points} x${chainStep}` : `+${points}`;
         spawnScorePopup(sumX / count, sumZ / count, label, isCombo ? 'combo' : '');
-        if (isCombo) playComboSound(chainStep);
+        if (isCombo) {
+          playChainSound(chainStep);
+          showChainCounter(chainStep);
+          // Flash on big chains
+          if (chainStep >= 3) {
+            triggerFlash(0xff66ff, 0.15 + chainStep * 0.05);
+          }
+        }
       }
       applyGravity();
     }
@@ -895,6 +1201,17 @@ function resolveMatches() {
       triggerShake(0.12 + chainStep * 0.06, 0.2 + chainStep * 0.05);
     } else {
       triggerShake(0.06, 0.12);
+    }
+
+    // Zone charging
+    chargeZone(totalCleared);
+
+    // Dynamic intensity spike
+    lastChainStep = chainStep;
+
+    // Flash on big clears
+    if (totalCleared >= 8) {
+      triggerFlash(0xffffff, 0.2);
     }
   }
 
@@ -1098,10 +1415,35 @@ function restartGame() {
   wallAdvanceTimer = 0;
   currentCol = Math.floor(GRID_COLS / 2);
 
+  // Reset trail particles
+  trailParticles.forEach((p) => {
+    gameGroup.remove(p.mesh);
+    p.mesh.geometry.dispose();
+    p.mesh.material.dispose();
+  });
+  trailParticles = [];
+
   // Reset juice
   shakeTimer = 0;
   shakeIntensity = 0;
   freezeTimer = 0;
+  flashTimer = 0;
+  flashOverlayEl.style.opacity = 0;
+  intensityLevel = 0;
+  lastChainStep = 0;
+
+  // Reset zone
+  zoneCharge = 0;
+  zoneActive = false;
+  zoneTimer = 0;
+  zoneClearedInZone = 0;
+  document.body.classList.remove('zone-active');
+  updateZoneBar();
+
+  // Reset chain display
+  chainDisplayTimer = 0;
+  chainDisplayStep = 0;
+  chainCounterEl.style.display = 'none';
 
   // Reset progression
   level = 1;
@@ -1196,6 +1538,10 @@ window.addEventListener('keydown', (e) => {
     case 'KeyS':
       e.preventDefault();
       quickDrop();
+      break;
+    case 'KeyQ':
+      e.preventDefault();
+      activateZone();
       break;
   }
 });
@@ -1363,13 +1709,44 @@ function animate() {
     dt = 0;
   }
 
+  // Zone time scaling
+  let gameDt = dt;
+  if (zoneActive) {
+    gameDt = dt * ZONE_TIME_SCALE;
+    zoneTimer -= dt;
+    updateZoneBar();
+    if (zoneTimer <= 0) {
+      deactivateZone();
+    }
+  }
+
+  // Dynamic intensity update (always uses real dt)
+  updateDynamicIntensity(dt, lastChainStep);
+  // Decay lastChainStep over time
+  if (lastChainStep > 0 && flashTimer <= 0) lastChainStep = 0;
+
   if (!gameOver) {
-    updateShooting(dt);
-    updateParticles(dt);
+    updateShooting(gameDt);
+    updateParticles(dt); // particles always at full speed
+    updateTrailParticles(dt);
     updateSpecialCubeVisuals(dt);
     updateGhost();
 
-    wallAdvanceTimer += dt;
+    // Spawn trail particles behind shooting cube
+    if (shootingCube) {
+      const sc = shootingCube;
+      const trailColor = sc.colorIndex === RAINBOW_INDEX ? 0xffffff
+        : sc.colorIndex === BOMB_INDEX ? 0xff6600
+        : COLORS[sc.colorIndex];
+      if (Math.random() < 0.6) {
+        spawnTrailParticle(sc.mesh.position.x, sc.mesh.position.y, sc.mesh.position.z, trailColor);
+      }
+    }
+
+    // Wall advance (paused during Zone)
+    if (!zoneActive) {
+      wallAdvanceTimer += gameDt;
+    }
     const currentInterval = getWallInterval();
     const timeLeft = currentInterval - wallAdvanceTimer;
     if (timeLeft <= 3 && timeLeft > 0) {
@@ -1384,6 +1761,7 @@ function animate() {
     }
   } else {
     updateParticles(dt);
+    updateTrailParticles(dt);
   }
 
   // Spawn cube scale-pop feedback
@@ -1399,6 +1777,11 @@ function animate() {
   if (ghostCube.visible) {
     ghostMat.opacity = 0.18 + Math.sin(Date.now() * 0.005) * 0.1;
   }
+
+  // Dynamic FOV: widens slightly during intensity, narrows during zone
+  const targetFov = zoneActive ? 55 : (60 + intensityLevel * 8);
+  camera.fov += (targetFov - camera.fov) * Math.min(1, dt * 4);
+  camera.updateProjectionMatrix();
 
   // Smooth camera tracking
   const lerpFactor = 1 - Math.exp(-CAMERA_LERP_SPEED * dt);

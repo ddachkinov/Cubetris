@@ -275,6 +275,108 @@
         font-weight: 700;
       }
       #tutorial button:hover { background: #3a8eef; }
+      /* Zone bar */
+      #zone-bar {
+        position: absolute;
+        bottom: 50px;
+        left: 20px;
+        width: 6px;
+        height: 200px;
+        background: rgba(255,255,255,0.1);
+        border-radius: 3px;
+        overflow: hidden;
+        border: 1px solid rgba(255,255,255,0.2);
+      }
+      #zone-fill {
+        position: absolute;
+        bottom: 0;
+        width: 100%;
+        height: 0%;
+        background: linear-gradient(to top, #4488ff, #88ccff);
+        border-radius: 3px;
+        transition: height 0.3s ease-out;
+      }
+      #zone-bar.active #zone-fill {
+        background: linear-gradient(to top, #ff8800, #ffcc00);
+        box-shadow: 0 0 12px rgba(255,200,0,0.6);
+      }
+      #zone-bar.charged #zone-fill {
+        background: linear-gradient(to top, #44ff88, #88ffcc);
+        box-shadow: 0 0 8px rgba(68,255,136,0.5);
+        animation: zone-pulse 0.8s ease-in-out infinite alternate;
+      }
+      @keyframes zone-pulse {
+        from { box-shadow: 0 0 4px rgba(68,255,136,0.3); }
+        to { box-shadow: 0 0 14px rgba(68,255,136,0.8); }
+      }
+      #zone-label {
+        position: absolute;
+        bottom: 34px;
+        left: 12px;
+        color: rgba(255,255,255,0.4);
+        font-size: 10px;
+        letter-spacing: 1px;
+        pointer-events: none;
+      }
+      /* Zone banner */
+      #zone-banner {
+        display: none;
+        position: absolute;
+        top: 35%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        font-size: 48px;
+        font-weight: 900;
+        color: #ffcc00;
+        text-shadow: 0 0 30px rgba(255,200,0,0.8), 0 0 60px rgba(255,200,0,0.4);
+        pointer-events: none;
+        z-index: 15;
+      }
+      @keyframes zone-activate {
+        0%   { opacity: 0; transform: translate(-50%, -50%) scale(0.3); }
+        20%  { opacity: 1; transform: translate(-50%, -50%) scale(1.2); }
+        35%  { transform: translate(-50%, -50%) scale(1); }
+        70%  { opacity: 1; }
+        100% { opacity: 0; transform: translate(-50%, -60%) scale(0.8); }
+      }
+      /* Chain counter */
+      #chain-counter {
+        display: none;
+        position: absolute;
+        top: 28%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        font-size: 56px;
+        font-weight: 900;
+        pointer-events: none;
+        z-index: 14;
+        color: #ff6ef5;
+        text-shadow: 0 0 20px rgba(255,110,245,0.8), 0 0 40px rgba(255,110,245,0.3);
+      }
+      @keyframes chain-pop {
+        0%   { opacity: 0; transform: translate(-50%, -50%) scale(0.5); }
+        15%  { opacity: 1; transform: translate(-50%, -50%) scale(1.3); }
+        30%  { transform: translate(-50%, -50%) scale(1); }
+        80%  { opacity: 1; }
+        100% { opacity: 0; transform: translate(-50%, -60%) scale(0.7); }
+      }
+      /* Flash overlay */
+      #flash-overlay {
+        position: absolute;
+        top: 0; left: 0; width: 100%; height: 100%;
+        pointer-events: none;
+        background: white;
+        opacity: 0;
+        z-index: 4;
+        transition: opacity 0.05s;
+      }
+      /* Zone active vignette effect */
+      body.zone-active #flash-overlay {
+        box-shadow: inset 0 0 100px rgba(255,200,0,0.15);
+      }
+      body.zone-active canvas {
+        filter: saturate(1.3) brightness(1.05);
+      }
     </style>
   </head>
   <body>
@@ -289,10 +391,17 @@
         <div id="next-color-box"></div>
       </div>
       <div id="next-label">NEXT</div>
+      <div id="flash-overlay"></div>
       <div id="wall-warning"></div>
+      <div id="zone-bar">
+        <div id="zone-fill"></div>
+      </div>
+      <div id="zone-label">ZONE [Q]</div>
+      <div id="zone-banner"></div>
+      <div id="chain-counter"></div>
       <div id="level-up"></div>
       <div id="row-clear"></div>
-      <div id="column-indicator">← A/D → move | SPACE shoot | W/S quick drop | ESC pause</div>
+      <div id="column-indicator">← A/D → move | SPACE shoot | W/S quick drop | Q zone | ESC pause</div>
       <div id="pause-screen">
         <h1>PAUSED</h1>
         <button id="resume-btn">Resume</button>
@@ -309,7 +418,8 @@
         <h2>CUBETRIS</h2>
         <div class="tut-line">Shoot colored cubes down the corridor.<br>Match <strong>3 or more</strong> of the same color to clear them!</div>
         <div class="tut-line">Chain combos for massive multipliers.</div>
-        <div class="tut-keys"><kbd>A</kbd> / <kbd>←</kbd> &nbsp; Move left &nbsp;&nbsp; <kbd>D</kbd> / <kbd>→</kbd> &nbsp; Move right &nbsp;&nbsp; <kbd>Space</kbd> &nbsp; Shoot &nbsp;&nbsp; <kbd>W</kbd> / <kbd>S</kbd> &nbsp; Quick drop &nbsp;&nbsp; <kbd>Esc</kbd> &nbsp; Pause</div>
+        <div class="tut-keys"><kbd>A</kbd> / <kbd>←</kbd> &nbsp; Move left &nbsp;&nbsp; <kbd>D</kbd> / <kbd>→</kbd> &nbsp; Move right &nbsp;&nbsp; <kbd>Space</kbd> &nbsp; Shoot &nbsp;&nbsp; <kbd>W</kbd> / <kbd>S</kbd> &nbsp; Quick drop &nbsp;&nbsp; <kbd>Q</kbd> &nbsp; Zone &nbsp;&nbsp; <kbd>Esc</kbd> &nbsp; Pause</div>
+        <div class="tut-line" style="font-size:14px; color:rgba(255,255,255,0.5);">Clear cubes to charge Zone. Activate to slow time!</div>
         <div class="tut-keys">Mobile: drag to move, tap to shoot</div>
         <button id="tutorial-btn">GOT IT</button>
       </div>
