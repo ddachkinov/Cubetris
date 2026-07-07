@@ -65,8 +65,11 @@ function playExplosionSound() {
   if (now - lastExplosionTime < EXPLOSION_COOLDOWN) return;
   lastExplosionTime = now;
 
-  // 1. Crack — a few ms of bright noise, the "snap" of the break
-  const crackDur = 0.018;
+  // Master variation per explosion — repetition is the biggest synth tell
+  const v = 0.8 + Math.random() * 0.3;
+
+  // 1. Crack — a few ms of noise, bandpassed so it snaps without hissing
+  const crackDur = 0.016 + Math.random() * 0.008;
   const crackSize = Math.ceil(audioCtx.sampleRate * crackDur);
   const crackBuf = audioCtx.createBuffer(1, crackSize, audioCtx.sampleRate);
   const cd = crackBuf.getChannelData(0);
@@ -75,17 +78,18 @@ function playExplosionSound() {
   }
   const crack = audioCtx.createBufferSource();
   crack.buffer = crackBuf;
-  const crackHp = audioCtx.createBiquadFilter();
-  crackHp.type = 'highpass';
-  crackHp.frequency.value = 2200;
+  const crackBp = audioCtx.createBiquadFilter();
+  crackBp.type = 'bandpass';
+  crackBp.frequency.value = 2400 + Math.random() * 900;
+  crackBp.Q.value = 0.8;
   const crackGain = audioCtx.createGain();
-  crackGain.gain.setValueAtTime(0.18, now);
-  crack.connect(crackHp).connect(crackGain).connect(audioCtx.destination);
+  crackGain.gain.setValueAtTime(0.12 * v, now);
+  crack.connect(crackBp).connect(crackGain).connect(audioCtx.destination);
   crack.start(now);
   crack.stop(now + crackDur);
 
   // 2. Body — broadband rumble that darkens as fragments disperse
-  const bodyDur = 0.3;
+  const bodyDur = 0.24 + Math.random() * 0.1;
   const bodySize = Math.ceil(audioCtx.sampleRate * bodyDur);
   const bodyBuf = audioCtx.createBuffer(1, bodySize, audioCtx.sampleRate);
   const bd = bodyBuf.getChannelData(0);
@@ -96,27 +100,29 @@ function playExplosionSound() {
   body.buffer = bodyBuf;
   const bodyLp = audioCtx.createBiquadFilter();
   bodyLp.type = 'lowpass';
-  bodyLp.frequency.setValueAtTime(3500 + Math.random() * 2000, now);
-  bodyLp.frequency.exponentialRampToValueAtTime(220, now + bodyDur);
+  bodyLp.frequency.setValueAtTime(2800 + Math.random() * 1800, now);
+  bodyLp.frequency.exponentialRampToValueAtTime(200, now + bodyDur);
   bodyLp.Q.value = 0.7;
   const bodyGain = audioCtx.createGain();
-  bodyGain.gain.setValueAtTime(0.3, now);
+  bodyGain.gain.setValueAtTime(0.24 * v, now);
   bodyGain.gain.exponentialRampToValueAtTime(0.001, now + bodyDur);
   body.connect(bodyLp).connect(bodyGain).connect(audioCtx.destination);
   body.start(now);
   body.stop(now + bodyDur);
 
-  // 3. Sub thump — the weight of the impact
+  // 3. Sub thump — the weight of the impact. Short attack ramp kills the
+  //    click; randomized start pitch keeps repeats from ringing identically
   const osc = audioCtx.createOscillator();
   osc.type = 'sine';
-  osc.frequency.setValueAtTime(90, now);
-  osc.frequency.exponentialRampToValueAtTime(36, now + 0.16);
+  osc.frequency.setValueAtTime(78 + Math.random() * 22, now);
+  osc.frequency.exponentialRampToValueAtTime(34, now + 0.15);
   const oscGain = audioCtx.createGain();
-  oscGain.gain.setValueAtTime(0.28, now);
-  oscGain.gain.exponentialRampToValueAtTime(0.001, now + 0.18);
+  oscGain.gain.setValueAtTime(0.0001, now);
+  oscGain.gain.linearRampToValueAtTime(0.22 * v, now + 0.004);
+  oscGain.gain.exponentialRampToValueAtTime(0.001, now + 0.17);
   osc.connect(oscGain).connect(audioCtx.destination);
   osc.start(now);
-  osc.stop(now + 0.18);
+  osc.stop(now + 0.17);
 }
 
 let lastBounceTime = 0;
@@ -166,21 +172,54 @@ function playBounceSound(velocity) {
   src.stop(now + dur);
 }
 
+// Level-up: a rising noise swell ("whoosh") under warm, detuned, lowpassed
+// chimes — an achievement swell in the same organic family as the debris
+// sounds, instead of a beepy NES arpeggio.
 function playLevelUpSound() {
   const now = qTime();
-  const notes = [523, 659, 784, 1047];
+
+  // Foundation: filtered noise sweeping upward
+  const swellDur = 0.75;
+  const size = Math.ceil(audioCtx.sampleRate * swellDur);
+  const buf = audioCtx.createBuffer(1, size, audioCtx.sampleRate);
+  const d = buf.getChannelData(0);
+  for (let i = 0; i < size; i++) d[i] = Math.random() * 2 - 1;
+  const swell = audioCtx.createBufferSource();
+  swell.buffer = buf;
+  const bp = audioCtx.createBiquadFilter();
+  bp.type = 'bandpass';
+  bp.frequency.setValueAtTime(350, now);
+  bp.frequency.exponentialRampToValueAtTime(2800, now + swellDur * 0.8);
+  bp.Q.value = 1.6;
+  const sg = audioCtx.createGain();
+  sg.gain.setValueAtTime(0.0001, now);
+  sg.gain.linearRampToValueAtTime(0.11, now + swellDur * 0.55);
+  sg.gain.exponentialRampToValueAtTime(0.001, now + swellDur);
+  swell.connect(bp).connect(sg).connect(audioCtx.destination);
+  swell.start(now);
+  swell.stop(now + swellDur);
+
+  // Chimes: detuned triangle pairs through a lowpass, soft attack —
+  // warm and pad-like rather than pure-tone beeps
+  const notes = [523.25, 659.25, 783.99, 1046.5]; // C5 E5 G5 C6
   notes.forEach((freq, i) => {
-    const t = now + i * 0.08;
-    const osc = audioCtx.createOscillator();
-    osc.type = 'triangle';
-    osc.frequency.setValueAtTime(freq, t);
-    const g = audioCtx.createGain();
-    g.gain.setValueAtTime(0, t);
-    g.gain.linearRampToValueAtTime(0.18, t + 0.02);
-    g.gain.exponentialRampToValueAtTime(0.001, t + 0.3);
-    osc.connect(g).connect(audioCtx.destination);
-    osc.start(t);
-    osc.stop(t + 0.3);
+    const t = now + i * 0.09;
+    for (const detune of [-4, 4]) {
+      const o = audioCtx.createOscillator();
+      o.type = 'triangle';
+      o.frequency.value = freq;
+      o.detune.value = detune;
+      const lp = audioCtx.createBiquadFilter();
+      lp.type = 'lowpass';
+      lp.frequency.value = 1600;
+      const g = audioCtx.createGain();
+      g.gain.setValueAtTime(0.0001, t);
+      g.gain.linearRampToValueAtTime(0.07, t + 0.03);
+      g.gain.exponentialRampToValueAtTime(0.001, t + 0.55);
+      o.connect(lp).connect(g).connect(audioCtx.destination);
+      o.start(t);
+      o.stop(t + 0.55);
+    }
   });
 }
 
