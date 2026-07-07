@@ -1,4 +1,6 @@
 import * as THREE from 'three';
+import { MusicEngine } from './music.js';
+import { THEMES } from './themes.js';
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 const GRID_COLS = 7;
@@ -23,7 +25,11 @@ const COLORS = [
   0xffcc00, // yellow
   0xff66ff, // magenta
 ];
-const COLOR_NAMES = ['#ff4444', '#44bb44', '#4488ff', '#ffcc00', '#ff66ff'];
+let COLOR_NAMES = COLORS.map((c) => '#' + c.toString(16).padStart(6, '0'));
+
+function refreshColorNames() {
+  COLOR_NAMES = COLORS.map((c) => '#' + c.toString(16).padStart(6, '0'));
+}
 
 // Special cube indices (beyond normal COLORS array)
 const RAINBOW_INDEX = COLORS.length;     // 5
@@ -32,8 +38,18 @@ const BOMB_INDEX = COLORS.length + 1;    // 6
 // ─── Audio (Web Audio API — synthesized, no external files) ─────────────────
 const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
 
+const music = new MusicEngine(audioCtx);
+
 function ensureAudio() {
   if (audioCtx.state === 'suspended') audioCtx.resume();
+  music.start();
+}
+
+// Quantize musical SFX to the next 8th note of the soundtrack (the Lumines
+// trick) — clears land ON the beat and the game starts to feel like an
+// instrument. Falls back to "now" before the music has started.
+function qTime() {
+  return music.started ? music.nextGridTime(2) : audioCtx.currentTime;
 }
 window.addEventListener('keydown', ensureAudio, { once: true });
 window.addEventListener('touchstart', ensureAudio, { once: true });
@@ -139,38 +155,8 @@ function playBounceSound(velocity) {
   noiseSrc.stop(now + noiseDur);
 }
 
-function playComboSound(chain) {
-  const now = audioCtx.currentTime;
-  const baseNote = 523;
-  const freq = baseNote * Math.pow(2, (chain - 1) * 2 / 12);
-  const dur = 0.15;
-
-  const osc = audioCtx.createOscillator();
-  osc.type = 'triangle';
-  osc.frequency.setValueAtTime(freq, now);
-  osc.frequency.exponentialRampToValueAtTime(freq * 1.5, now + dur * 0.3);
-  const g = audioCtx.createGain();
-  g.gain.setValueAtTime(0.2, now);
-  g.gain.exponentialRampToValueAtTime(0.001, now + dur);
-  osc.connect(g).connect(audioCtx.destination);
-  osc.start(now);
-  osc.stop(now + dur);
-
-  if (chain >= 3) {
-    const osc2 = audioCtx.createOscillator();
-    osc2.type = 'sine';
-    osc2.frequency.setValueAtTime(freq * 2, now);
-    const g2 = audioCtx.createGain();
-    g2.gain.setValueAtTime(0.1, now);
-    g2.gain.exponentialRampToValueAtTime(0.001, now + dur * 0.8);
-    osc2.connect(g2).connect(audioCtx.destination);
-    osc2.start(now);
-    osc2.stop(now + dur);
-  }
-}
-
 function playLevelUpSound() {
-  const now = audioCtx.currentTime;
+  const now = qTime();
   const notes = [523, 659, 784, 1047];
   notes.forEach((freq, i) => {
     const t = now + i * 0.08;
@@ -225,7 +211,7 @@ function playBombSound() {
 }
 
 function playRowClearSound() {
-  const now = audioCtx.currentTime;
+  const now = qTime();
   const osc = audioCtx.createOscillator();
   osc.type = 'sawtooth';
   osc.frequency.setValueAtTime(200, now);
@@ -285,9 +271,40 @@ function playZoneDeactivateSound() {
   osc.stop(now + 0.4);
 }
 
+// Low thump played on the beat while in danger — synced via music.onBeat
+function playHeartbeat(time) {
+  const o = audioCtx.createOscillator();
+  o.type = 'sine';
+  o.frequency.setValueAtTime(55, time);
+  o.frequency.exponentialRampToValueAtTime(35, time + 0.12);
+  const g = audioCtx.createGain();
+  g.gain.setValueAtTime(0.22, time);
+  g.gain.exponentialRampToValueAtTime(0.001, time + 0.18);
+  o.connect(g).connect(audioCtx.destination);
+  o.start(time);
+  o.stop(time + 0.2);
+}
+
+// Triumphant rising arp for clutch saves
+function playClutchSound() {
+  const t0 = qTime();
+  [523, 659, 784, 1047, 1319].forEach((f, i) => {
+    const t = t0 + i * 0.05;
+    const o = audioCtx.createOscillator();
+    o.type = 'triangle';
+    o.frequency.setValueAtTime(f, t);
+    const g = audioCtx.createGain();
+    g.gain.setValueAtTime(0.16, t);
+    g.gain.exponentialRampToValueAtTime(0.001, t + 0.25);
+    o.connect(g).connect(audioCtx.destination);
+    o.start(t);
+    o.stop(t + 0.25);
+  });
+}
+
 // ─── Enhanced chain combo sounds (pitch + harmony escalation) ───────────────
 function playChainSound(chainStep) {
-  const now = audioCtx.currentTime;
+  const now = qTime();
   const baseNote = 523; // C5
   const freq = baseNote * Math.pow(2, (chainStep - 1) * 2 / 12);
   const vol = Math.min(0.3, 0.15 + chainStep * 0.03);
@@ -352,10 +369,21 @@ let level = 1;
 let totalClearedCount = 0;
 let highScore = parseInt(localStorage.getItem('cubetris-best') || '0', 10);
 
+// Swappable RNG — Math.random normally, a date-seeded PRNG for Daily runs
+let rng = Math.random;
+let dailyMode = false;
+
+// Bag-based color dealing (like Tetris's 7-bag): 2 of each active color per
+// bag, shuffled. Kills droughts/floods so the game feels fair.
+let colorBag = [];
+let bagColorCount = 0;
+
 let grid = [];
 let currentCol = Math.floor(GRID_COLS / 2);
 let currentColorIndex = randomColorIndex();
-let nextColorIndex = randomColorIndex();
+let nextQueue = [randomColorIndex(), randomColorIndex(), randomColorIndex()];
+let heldColorIndex = null;
+let holdUsedThisTurn = false;
 let shootingCube = null;
 let shootingVelocity = null;
 let score = 0;
@@ -391,6 +419,19 @@ let chainDisplayStep = 0;
 // Shooting trail particles
 let trailParticles = [];
 
+// Danger / clutch state
+let dangerActive = false;
+let slowMoTimer = 0;
+
+// Run stats (per game) + lifetime stats + badges
+let runStats = { bestChain: 0, cleared: 0, zones: 0, clutches: 0 };
+let lifeStats = JSON.parse(
+  localStorage.getItem('cubetris-stats')
+  || '{"cleared":0,"bestChain":0,"games":0,"zones":0,"clutches":0}'
+);
+let badges = new Set(JSON.parse(localStorage.getItem('cubetris-badges') || '[]'));
+let runBadges = [];
+
 // ─── DOM refs ────────────────────────────────────────────────────────────────
 const scoreEl = document.getElementById('score-val');
 const bestEl = document.getElementById('best-val');
@@ -400,7 +441,17 @@ const finalBestEl = document.getElementById('final-best');
 const newBestEl = document.getElementById('new-best');
 const gameOverScreen = document.getElementById('game-over-screen');
 const restartBtn = document.getElementById('restart-btn');
-const nextColorBox = document.getElementById('next-color-box');
+const qSlot0 = document.getElementById('q-slot-0');
+const qSlot1 = document.getElementById('q-slot-1');
+const qSlot2 = document.getElementById('q-slot-2');
+const holdBoxEl = document.getElementById('hold-preview');
+const clutchEl = document.getElementById('clutch-banner');
+const badgeToastEl = document.getElementById('badge-toast');
+const runStatsEl = document.getElementById('run-stats');
+const runBadgesEl = document.getElementById('run-badges');
+const dailyResultEl = document.getElementById('daily-result');
+const dailyBtn = document.getElementById('daily-btn');
+const dailyIndicatorEl = document.getElementById('daily-indicator');
 const wallWarningEl = document.getElementById('wall-warning');
 const levelUpEl = document.getElementById('level-up');
 const rowClearEl = document.getElementById('row-clear');
@@ -481,6 +532,12 @@ scene.add(backLight);
 const gameGroup = new THREE.Group();
 scene.add(gameGroup);
 
+// Theme state — material refs so applyTheme can recolor the environment
+let groundMatRef = null;
+let gridCoreMatRef = null;
+let gridFadeMatRef = null;
+let currentThemeIndex = -1;
+
 // ─── Coordinate mapping ─────────────────────────────────────────────────────
 function colToX(col) {
   return col * COL_CELL;
@@ -498,6 +555,7 @@ function createGroundPlane() {
   const totalDepth = FIELD_DEPTH + EXTRA_ROWS * DEPTH_CELL + 8;
   const groundGeo = new THREE.PlaneGeometry(totalWidth, totalDepth);
   const groundMat = new THREE.MeshLambertMaterial({ color: 0x111122 });
+  groundMatRef = groundMat;
   const ground = new THREE.Mesh(groundGeo, groundMat);
   ground.rotation.x = -Math.PI / 2;
   ground.position.set(centerX, -CUBE_SIZE / 2, (FIELD_DEPTH + EXTRA_ROWS * DEPTH_CELL) / 2 - 1);
@@ -508,6 +566,8 @@ function createGroundPlane() {
 function createGridVisual() {
   const coreMat = new THREE.LineBasicMaterial({ color: 0x5566aa });
   const fadeMat = new THREE.LineBasicMaterial({ color: 0x334466 });
+  gridCoreMatRef = coreMat;
+  gridFadeMatRef = fadeMat;
   const floorY = -CUBE_SIZE / 2 + 0.01;
 
   const farZ = FIELD_DEPTH + EXTRA_ROWS * DEPTH_CELL + 1;
@@ -543,7 +603,7 @@ function createGridVisual() {
     gameGroup.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts), mat));
   }
 
-  const wallMat = new THREE.LineBasicMaterial({ color: 0x5566aa });
+  const wallMat = coreMat; // side walls share the theme's core grid color
   const wallHeight = CUBE_SIZE * 2;
 
   [coreLeftX, coreRightX].forEach((x) => {
@@ -577,6 +637,41 @@ function createGridVisual() {
     new THREE.Vector3(coreRightX, floorY, wallZ),
   ];
   gameGroup.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(wallVertPts), wallIndicatorMat));
+}
+
+// ─── Theme application (Lumines-style skins, rotate every 3 levels) ──────────
+function applyTheme(idx) {
+  const theme = THEMES[idx % THEMES.length];
+  currentThemeIndex = idx % THEMES.length;
+
+  scene.background.setHex(theme.bg);
+  if (groundMatRef) groundMatRef.color.setHex(theme.ground);
+  if (gridCoreMatRef) gridCoreMatRef.color.setHex(theme.gridCore);
+  if (gridFadeMatRef) gridFadeMatRef.color.setHex(theme.gridFade);
+
+  // Swap the cube palette (same 5 hue families, theme-tinted)
+  for (let i = 0; i < COLORS.length; i++) COLORS[i] = theme.palette[i];
+  refreshColorNames();
+
+  // Recolor every existing normal cube on the board
+  for (let c = 0; c < GRID_COLS; c++) {
+    for (let r = 0; r < GRID_ROWS; r++) {
+      const cell = grid[c] && grid[c][r];
+      if (cell && cell.colorIndex < COLORS.length) {
+        cell.mesh.material.color.setHex(COLORS[cell.colorIndex]);
+      }
+    }
+  }
+  if (shootingCube && shootingCube.colorIndex < COLORS.length) {
+    shootingCube.mesh.material.color.setHex(COLORS[shootingCube.colorIndex]);
+  }
+
+  music.setTheme(theme.music);
+
+  updateSpawnCube();
+  updateNextPreview();
+  updateHoldPreview();
+  updateGhost();
 }
 
 // ─── Column highlight ────────────────────────────────────────────────────────
@@ -663,16 +758,59 @@ function getWallInterval() {
   return Math.max(WALL_ADVANCE_INTERVAL_MIN, WALL_ADVANCE_INTERVAL_START - (level - 1) * 0.8);
 }
 
-function randomColorIndex() {
-  // Special cubes at higher levels
-  if (level >= 6 && Math.random() < 0.04) return BOMB_INDEX;
-  if (level >= 4 && Math.random() < 0.05) return RAINBOW_INDEX;
-  return Math.floor(Math.random() * getActiveColorCount());
+// ─── Seeded RNG (Daily runs) ─────────────────────────────────────────────────
+function hashString(s) {
+  let h = 2166136261;
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return h >>> 0;
 }
 
-// Wall rows only get normal colors
+function mulberry32(seed) {
+  let a = seed >>> 0;
+  return function () {
+    a |= 0;
+    a = (a + 0x6d2b79f5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+function todayKey() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+// ─── Bag-based color dealing ─────────────────────────────────────────────────
+function drawColorFromBag() {
+  const n = getActiveColorCount();
+  if (bagColorCount !== n) {
+    colorBag = [];
+    bagColorCount = n;
+  }
+  if (colorBag.length === 0) {
+    for (let i = 0; i < n; i++) colorBag.push(i, i);
+    for (let i = colorBag.length - 1; i > 0; i--) {
+      const j = Math.floor(rng() * (i + 1));
+      [colorBag[i], colorBag[j]] = [colorBag[j], colorBag[i]];
+    }
+  }
+  return colorBag.pop();
+}
+
+function randomColorIndex() {
+  // Special cubes at higher levels
+  if (level >= 6 && rng() < 0.04) return BOMB_INDEX;
+  if (level >= 4 && rng() < 0.05) return RAINBOW_INDEX;
+  return drawColorFromBag();
+}
+
+// Wall rows only get normal colors (not bag-dealt — walls should feel wild)
 function randomWallColorIndex() {
-  return Math.floor(Math.random() * getActiveColorCount());
+  return Math.floor(rng() * getActiveColorCount());
 }
 
 function createCubeMesh(colorIndex) {
@@ -870,6 +1008,65 @@ function triggerFlash(color, intensity) {
   flashTimer = 0.15;
 }
 
+// ─── Danger state + clutch saves ────────────────────────────────────────────
+// Danger = any cube within 2 rows of the front. Clearing your way out of
+// danger is a "clutch" — slow-mo celebration + bonus. These near-death saves
+// are the moments players remember and talk about.
+function isInDanger() {
+  for (let c = 0; c < GRID_COLS; c++) {
+    if (grid[c] && (grid[c][1] || grid[c][2])) return true;
+  }
+  return false;
+}
+
+function triggerClutch() {
+  slowMoTimer = 0.7;
+  const bonus = 150;
+  score += bonus;
+  scoreEl.textContent = score;
+  runStats.clutches++;
+  lifeStats.clutches = (lifeStats.clutches || 0) + 1;
+  awardBadge('clutch-1', 'Clutch Save');
+
+  clutchEl.textContent = `CLUTCH! +${bonus}`;
+  clutchEl.style.display = 'block';
+  clutchEl.style.animation = 'none';
+  void clutchEl.offsetWidth;
+  clutchEl.style.animation = 'rowclear 1.1s ease-out forwards';
+  clutchEl.addEventListener('animationend', () => {
+    clutchEl.style.display = 'none';
+  }, { once: true });
+
+  playClutchSound();
+  triggerFlash(0x66ffe0, 0.2);
+  triggerShake(0.18, 0.3);
+  hapticPulse(40);
+}
+
+// ─── Badges + lifetime stats ────────────────────────────────────────────────
+function saveLifeStats() {
+  localStorage.setItem('cubetris-stats', JSON.stringify(lifeStats));
+}
+
+function awardBadge(id, label) {
+  if (badges.has(id)) return;
+  badges.add(id);
+  runBadges.push(label);
+  localStorage.setItem('cubetris-badges', JSON.stringify([...badges]));
+  showBadgeToast(label);
+}
+
+function showBadgeToast(label) {
+  badgeToastEl.textContent = `🏅 BADGE: ${label}`;
+  badgeToastEl.style.display = 'block';
+  badgeToastEl.style.animation = 'none';
+  void badgeToastEl.offsetWidth;
+  badgeToastEl.style.animation = 'badge-in 2.2s ease-out forwards';
+  badgeToastEl.addEventListener('animationend', () => {
+    badgeToastEl.style.display = 'none';
+  }, { once: true });
+}
+
 // ─── Zone power-up ──────────────────────────────────────────────────────────
 function updateZoneBar() {
   const pct = Math.min(100, (zoneCharge / ZONE_CHARGE_MAX) * 100);
@@ -903,14 +1100,20 @@ function activateZone() {
   }, { once: true });
 
   playZoneActivateSound();
+  music.setZoneFilter(true); // underwater lowpass while time is slowed
+  runStats.zones++;
+  lifeStats.zones = (lifeStats.zones || 0) + 1;
+  awardBadge('zone-1', 'In The Zone');
   triggerShake(0.2, 0.3);
   triggerFlash(0xffcc00, 0.25);
+  hapticPulse(30);
   updateZoneBar();
 }
 
 function deactivateZone() {
   zoneActive = false;
   document.body.classList.remove('zone-active');
+  music.setZoneFilter(false);
   playZoneDeactivateSound();
 
   // Bonus score for cubes cleared during zone
@@ -1025,6 +1228,10 @@ function updateDynamicIntensity(dt, chainStep) {
       flashOverlayEl.style.opacity = parseFloat(flashOverlayEl.style.opacity) * 0.85;
     }
   }
+
+  // Drive the music stems: combos and danger both push the mix harder
+  music.setIntensity(Math.max(intensityLevel, dangerActive ? 0.55 : 0));
+  music.update(dt);
 }
 
 // ─── Level progression ───────────────────────────────────────────────────────
@@ -1035,11 +1242,17 @@ function checkLevelUp(clearedThisAction) {
     level = newLevel;
     levelEl.textContent = `Level ${level}`;
 
-    const hue = 0.65 + (level - 1) * 0.04;
-    const sat = 0.3 + Math.min(level * 0.05, 0.4);
-    scene.background.setHSL(hue % 1, sat, 0.06 + Math.min(level * 0.005, 0.04));
+    // Rotate theme every 3 levels — the level-up becomes an audiovisual reveal
+    const themeIdx = Math.floor((level - 1) / 3) % THEMES.length;
+    const themeChanged = themeIdx !== currentThemeIndex;
+    if (themeChanged) applyTheme(themeIdx);
 
-    levelUpEl.textContent = `LEVEL ${level}`;
+    if (level >= 5) awardBadge('level-5', 'Survivor');
+    if (level >= 10) awardBadge('level-10', 'Veteran');
+
+    levelUpEl.innerHTML = `LEVEL ${level}` + (themeChanged
+      ? `<div style="font-size:20px;letter-spacing:6px;margin-top:6px;">${THEMES[themeIdx].name}</div>`
+      : '');
     levelUpEl.style.display = 'block';
     levelUpEl.style.animation = 'none';
     void levelUpEl.offsetWidth;
@@ -1069,6 +1282,7 @@ function showRowClearBanner(count) {
 
 // ─── Chain-check (with combos, bombs, row clears) ────────────────────────────
 function resolveMatches() {
+  const dangerBefore = isInDanger();
   let totalCleared = 0;
   let chainStep = 0;
   let changed = true;
@@ -1213,6 +1427,13 @@ function resolveMatches() {
     if (totalCleared >= 8) {
       triggerFlash(0xffffff, 0.2);
     }
+
+    // Chain badges
+    if (chainStep >= 3) awardBadge('chain-3', 'Chain Reaction');
+    if (chainStep >= 5) awardBadge('chain-5', 'Chain Master');
+
+    // Clutch save: this clear pulled us out of the danger zone
+    if (dangerBefore && !isInDanger()) triggerClutch();
   }
 
   return { totalCleared, chainStep, totalRowClears };
@@ -1224,6 +1445,15 @@ function addScore(cleared, chainStep, rowClears) {
   const rowBonus = rowClears * ROW_CLEAR_BONUS;
   score += points + rowBonus;
   scoreEl.textContent = score;
+
+  // Stats + badges
+  runStats.cleared += cleared;
+  lifeStats.cleared = (lifeStats.cleared || 0) + cleared;
+  if (chainStep > runStats.bestChain) runStats.bestChain = chainStep;
+  if (chainStep > (lifeStats.bestChain || 0)) lifeStats.bestChain = chainStep;
+  if (lifeStats.cleared >= 1000) awardBadge('cubes-1000', '1,000 Cubes Cleared');
+  saveLifeStats();
+
   checkLevelUp(cleared);
 }
 
@@ -1246,8 +1476,9 @@ function shoot() {
   };
   shootingVelocity = SHOOT_SPEED;
 
-  currentColorIndex = nextColorIndex;
-  nextColorIndex = randomColorIndex();
+  currentColorIndex = nextQueue.shift();
+  nextQueue.push(randomColorIndex());
+  holdUsedThisTurn = false;
   updateSpawnCube();
   updateNextPreview();
 }
@@ -1266,12 +1497,36 @@ function quickDrop() {
     addScore(totalCleared, chainStep, totalRowClears);
   }
 
-  currentColorIndex = nextColorIndex;
-  nextColorIndex = randomColorIndex();
+  currentColorIndex = nextQueue.shift();
+  nextQueue.push(randomColorIndex());
+  holdUsedThisTurn = false;
   updateSpawnCube();
   updateNextPreview();
 
   checkGameOver();
+}
+
+// ─── Hold / swap (the classic Tetris banking mechanic) ───────────────────────
+// Bank the current cube for later; once per shot to prevent infinite cycling.
+function holdSwap() {
+  if (gameOver || paused || shootingCube || holdUsedThisTurn) return;
+  if (heldColorIndex === null) {
+    heldColorIndex = currentColorIndex;
+    currentColorIndex = nextQueue.shift();
+    nextQueue.push(randomColorIndex());
+  } else {
+    const t = heldColorIndex;
+    heldColorIndex = currentColorIndex;
+    currentColorIndex = t;
+  }
+  holdUsedThisTurn = true;
+  spawnScalePop = 1;
+  playTickSound();
+  hapticPulse(15);
+  updateSpawnCube();
+  updateGhost();
+  updateNextPreview();
+  updateHoldPreview();
 }
 
 function updateShooting(dt) {
@@ -1368,10 +1623,42 @@ function triggerGameOver() {
 
   finalBestEl.textContent = highScore;
   newBestEl.style.display = isNewBest ? 'block' : 'none';
+
+  // Run recap — defeat should still feel like progress
+  lifeStats.games = (lifeStats.games || 0) + 1;
+  saveLifeStats();
+  runStatsEl.textContent =
+    `Best chain x${Math.max(1, runStats.bestChain)} • ${runStats.cleared} cubes • Level ${level}`
+    + (runStats.clutches ? ` • ${runStats.clutches} clutch` : '');
+  runBadgesEl.textContent = runBadges.length ? '🏅 ' + runBadges.join(' • ') : '';
+
+  // Daily challenge result
+  if (dailyMode) {
+    const key = 'cubetris-daily-' + todayKey();
+    const prev = parseInt(localStorage.getItem(key) || '0', 10);
+    if (score > prev) localStorage.setItem(key, String(score));
+    dailyResultEl.textContent = `📅 Daily ${todayKey()} — Best: ${Math.max(prev, score)}`;
+    dailyResultEl.style.display = 'block';
+  } else {
+    dailyResultEl.style.display = 'none';
+  }
+
+  if (dangerActive) {
+    dangerActive = false;
+    document.body.classList.remove('danger');
+  }
+
   gameOverScreen.style.display = 'flex';
 }
 
-function restartGame() {
+function restartGame(asDaily = false) {
+  // Daily runs use a date-seeded PRNG — everyone gets the same board today
+  dailyMode = !!asDaily;
+  rng = dailyMode ? mulberry32(hashString('cubetris-' + todayKey())) : Math.random;
+  colorBag = [];
+  bagColorCount = 0;
+  dailyIndicatorEl.style.display = dailyMode ? 'block' : 'none';
+
   for (let c = 0; c < GRID_COLS; c++) {
     for (let r = 0; r < GRID_ROWS; r++) {
       if (grid[c][r]) {
@@ -1445,18 +1732,32 @@ function restartGame() {
   chainDisplayStep = 0;
   chainCounterEl.style.display = 'none';
 
-  // Reset progression
+  // Reset danger / clutch
+  slowMoTimer = 0;
+  if (dangerActive) {
+    dangerActive = false;
+    document.body.classList.remove('danger');
+  }
+
+  // Reset run stats + badges earned this run
+  runStats = { bestChain: 0, cleared: 0, zones: 0, clutches: 0 };
+  runBadges = [];
+
+  // Reset progression (theme 0 restores environment + palette + music)
   level = 1;
   totalClearedCount = 0;
   levelEl.textContent = 'Level 1';
-  scene.background.setHex(0x0a0a1a);
+  applyTheme(0);
 
   currentColorIndex = randomColorIndex();
-  nextColorIndex = randomColorIndex();
+  nextQueue = [randomColorIndex(), randomColorIndex(), randomColorIndex()];
+  heldColorIndex = null;
+  holdUsedThisTurn = false;
 
   updateSpawnCube();
   updateColumnHighlight();
   updateNextPreview();
+  updateHoldPreview();
   updateGhost();
 
   cameraTargetX = colToX(currentCol);
@@ -1469,18 +1770,27 @@ function restartGame() {
   initGrid();
 }
 
-// ─── Next-cube preview ───────────────────────────────────────────────────────
-function updateNextPreview() {
-  if (nextColorIndex === RAINBOW_INDEX) {
-    nextColorBox.style.background = 'linear-gradient(135deg, #ff4444, #ffcc00, #44bb44, #4488ff, #ff66ff)';
-    nextColorBox.style.backgroundColor = '';
-  } else if (nextColorIndex === BOMB_INDEX) {
-    nextColorBox.style.background = '';
-    nextColorBox.style.backgroundColor = '#ff6600';
-  } else {
-    nextColorBox.style.background = '';
-    nextColorBox.style.backgroundColor = COLOR_NAMES[nextColorIndex];
+// ─── Next-queue + hold previews ──────────────────────────────────────────────
+function colorCssFor(idx) {
+  if (idx === RAINBOW_INDEX) {
+    return `linear-gradient(135deg, ${COLOR_NAMES.join(', ')})`;
   }
+  if (idx === BOMB_INDEX) return '#ff6600';
+  return COLOR_NAMES[idx];
+}
+
+function paintSlot(el, idx) {
+  el.style.background = (idx === null || idx === undefined) ? 'transparent' : colorCssFor(idx);
+}
+
+function updateNextPreview() {
+  paintSlot(qSlot0, nextQueue[0]);
+  paintSlot(qSlot1, nextQueue[1]);
+  paintSlot(qSlot2, nextQueue[2]);
+}
+
+function updateHoldPreview() {
+  paintSlot(holdBoxEl, heldColorIndex);
 }
 
 // ─── Pause ───────────────────────────────────────────────────────────────────
@@ -1506,6 +1816,11 @@ pauseRestartBtn.addEventListener('click', () => {
 window.addEventListener('keydown', (e) => {
   if (e.code === 'Escape') {
     if (!gameOver) togglePause();
+    return;
+  }
+  // Instant retry — the restart loop IS the addiction loop
+  if (gameOver && (e.code === 'KeyR' || e.code === 'Enter')) {
+    restartGame(dailyMode);
     return;
   }
   if (gameOver || paused) return;
@@ -1542,6 +1857,10 @@ window.addEventListener('keydown', (e) => {
     case 'KeyQ':
       e.preventDefault();
       activateZone();
+      break;
+    case 'KeyE':
+      e.preventDefault();
+      holdSwap();
       break;
   }
 });
@@ -1584,8 +1903,18 @@ function moveToColumn(newCol) {
   playTickSound();
 }
 
+// Taps on interactive UI (zone bar, hold box, buttons) must not shoot
+function isUiTarget(e) {
+  const t = e.target;
+  return t && t.closest && t.closest('#zone-bar, #hold-preview, #pause-btn, #daily-btn, button');
+}
+
 window.addEventListener('touchstart', (e) => {
   if (gameOver || paused) return;
+  if (isUiTarget(e)) {
+    touchStartX = null;
+    return;
+  }
   const t = e.touches[0];
   touchStartX = t.clientX;
   touchStartY = t.clientY;
@@ -1617,9 +1946,10 @@ window.addEventListener('touchend', (e) => {
 
   if (!touchDragged && Math.abs(dy) < 30 && Math.abs(t.clientX - touchStartX) < 30) {
     shoot();
-  }
-  if (!touchDragged && dy < -30) {
+  } else if (!touchDragged && dy < -30) {
     shoot();
+  } else if (!touchDragged && dy > 40) {
+    quickDrop(); // swipe down = instant placement
   }
 
   touchStartX = null;
@@ -1628,7 +1958,17 @@ window.addEventListener('touchend', (e) => {
   touchDragged = false;
 });
 
-restartBtn.addEventListener('click', restartGame);
+restartBtn.addEventListener('click', () => restartGame(false));
+
+// Tappable Zone bar + Hold box (mobile-critical: Zone was keyboard-only)
+zoneBarContainer.addEventListener('click', () => activateZone());
+holdBoxEl.addEventListener('click', () => holdSwap());
+
+// Daily challenge — same seeded board for everyone, resets each calendar day
+dailyBtn.addEventListener('click', () => {
+  if (paused) togglePause();
+  restartGame(true);
+});
 
 // ─── Tutorial ─────────────────────────────────────────────────────────────────
 const tutorialSeen = localStorage.getItem('cubetris-tutorial-seen');
@@ -1685,10 +2025,17 @@ function updateSpecialCubeVisuals(dt) {
 initGrid();
 createGroundPlane();
 createGridVisual();
+applyTheme(0);
 updateSpawnCube();
 updateColumnHighlight();
 updateNextPreview();
+updateHoldPreview();
 updateGhost();
+
+// Heartbeat synced to the music's beat while in danger
+music.onBeat = (time) => {
+  if (dangerActive && !gameOver && !paused) playHeartbeat(time);
+};
 
 const clock = new THREE.Clock();
 
@@ -1720,12 +2067,25 @@ function animate() {
     }
   }
 
+  // Clutch slow-mo (stacks with zone scaling)
+  if (slowMoTimer > 0) {
+    slowMoTimer -= dt;
+    gameDt *= 0.35;
+  }
+
   // Dynamic intensity update (always uses real dt)
   updateDynamicIntensity(dt, lastChainStep);
   // Decay lastChainStep over time
   if (lastChainStep > 0 && flashTimer <= 0) lastChainStep = 0;
 
   if (!gameOver) {
+    // Danger state tracking — drives vignette, heartbeat, and music push
+    const dangerNow = isInDanger();
+    if (dangerNow !== dangerActive) {
+      dangerActive = dangerNow;
+      document.body.classList.toggle('danger', dangerActive);
+    }
+
     updateShooting(gameDt);
     updateParticles(dt); // particles always at full speed
     updateTrailParticles(dt);

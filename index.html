@@ -2,7 +2,10 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="theme-color" content="#08141f" />
     <title>Cubetris</title>
     <style>
       * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -26,37 +29,59 @@
       #hud span { display: block; margin-bottom: 6px; }
       #hud .hud-best { color: rgba(255,255,255,0.45); font-size: 13px; }
       #hud .hud-level { color: #7bf; font-size: 15px; font-weight: 700; }
-      #next-preview {
+      /* 3-deep next queue */
+      #queue-preview {
         position: absolute;
         top: 20px;
         right: 20px;
-        width: 80px;
-        height: 80px;
-        border: 2px solid rgba(255,255,255,0.3);
-        border-radius: 8px;
         display: flex;
+        flex-direction: column;
+        gap: 6px;
         align-items: center;
-        justify-content: center;
       }
-      #next-color-box {
-        width: 50px;
-        height: 50px;
-        border-radius: 6px;
+      .q-slot {
+        width: 48px;
+        height: 48px;
+        border-radius: 8px;
+        border: 2px solid rgba(255,255,255,0.3);
       }
+      .q-slot.small { width: 36px; height: 36px; opacity: 0.75; }
+      .q-slot.tiny { width: 27px; height: 27px; opacity: 0.5; }
       #next-label {
         position: absolute;
-        top: 104px;
+        top: 148px;
         right: 20px;
-        width: 80px;
+        width: 52px;
         text-align: center;
         color: rgba(255,255,255,0.6);
-        font-size: 12px;
+        font-size: 11px;
+      }
+      /* Hold slot */
+      #hold-preview {
+        position: absolute;
+        top: 20px;
+        right: 90px;
+        width: 48px;
+        height: 48px;
+        border-radius: 8px;
+        border: 2px dashed rgba(255,255,255,0.35);
+        pointer-events: auto;
+        cursor: pointer;
+      }
+      #hold-label {
+        position: absolute;
+        top: 74px;
+        right: 90px;
+        width: 52px;
+        text-align: center;
+        color: rgba(255,255,255,0.5);
+        font-size: 11px;
       }
       /* Pause button */
       #pause-btn {
         position: absolute;
         top: 20px;
-        right: 110px;
+        right: 160px;
         width: 40px;
         height: 40px;
         border: 2px solid rgba(255,255,255,0.3);
@@ -280,12 +305,14 @@
         position: absolute;
         bottom: 50px;
         left: 20px;
-        width: 6px;
+        width: 16px;
         height: 200px;
         background: rgba(255,255,255,0.1);
-        border-radius: 3px;
+        border-radius: 8px;
         overflow: hidden;
         border: 1px solid rgba(255,255,255,0.2);
+        pointer-events: auto; /* tappable on mobile */
+        cursor: pointer;
       }
       #zone-fill {
         position: absolute;
@@ -377,6 +404,93 @@
       body.zone-active canvas {
         filter: saturate(1.3) brightness(1.05);
       }
+      /* Danger vignette — heartbeat red edges when cubes near the front */
+      #danger-vignette {
+        position: absolute;
+        top: 0; left: 0; width: 100%; height: 100%;
+        pointer-events: none;
+        z-index: 6;
+        opacity: 0;
+        transition: opacity 0.4s;
+        box-shadow: inset 0 0 120px rgba(255, 20, 20, 0.45);
+      }
+      body.danger #danger-vignette {
+        opacity: 1;
+        animation: danger-pulse 0.9s ease-in-out infinite;
+      }
+      @keyframes danger-pulse {
+        0%, 100% { box-shadow: inset 0 0 100px rgba(255, 20, 20, 0.3); }
+        50%      { box-shadow: inset 0 0 160px rgba(255, 20, 20, 0.55); }
+      }
+      /* Clutch save banner */
+      #clutch-banner {
+        display: none;
+        position: absolute;
+        top: 42%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        font-size: 40px;
+        font-weight: 900;
+        color: #66ffe0;
+        text-shadow: 0 0 18px rgba(102,255,224,0.8), 0 0 40px rgba(102,255,224,0.4);
+        pointer-events: none;
+        z-index: 16;
+        white-space: nowrap;
+      }
+      /* Badge toast */
+      #badge-toast {
+        display: none;
+        position: absolute;
+        bottom: 90px;
+        left: 50%;
+        transform: translateX(-50%);
+        padding: 8px 20px;
+        border-radius: 20px;
+        background: rgba(0,0,0,0.6);
+        border: 1px solid rgba(255,224,85,0.5);
+        color: #ffe055;
+        font-size: 16px;
+        font-weight: 700;
+        pointer-events: none;
+        z-index: 20;
+        white-space: nowrap;
+      }
+      @keyframes badge-in {
+        0%   { opacity: 0; transform: translateX(-50%) translateY(20px); }
+        12%  { opacity: 1; transform: translateX(-50%) translateY(0); }
+        80%  { opacity: 1; }
+        100% { opacity: 0; transform: translateX(-50%) translateY(-10px); }
+      }
+      /* Daily button */
+      #daily-btn {
+        position: absolute;
+        top: 20px;
+        right: 210px;
+        width: 40px;
+        height: 40px;
+        border: 2px solid rgba(255,255,255,0.3);
+        border-radius: 8px;
+        background: rgba(0,0,0,0.3);
+        color: rgba(255,255,255,0.8);
+        font-size: 18px;
+        cursor: pointer;
+        pointer-events: auto;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+      #daily-btn:hover { background: rgba(255,255,255,0.1); }
+      #daily-indicator {
+        display: none;
+        color: #ffd166;
+        font-size: 13px;
+        font-weight: 700;
+      }
+      /* Game-over extras */
+      #run-stats { font-size: 15px; color: rgba(255,255,255,0.65); margin-bottom: 6px; }
+      #run-badges { font-size: 14px; color: #ffe055; margin-bottom: 10px; }
+      #daily-result { display: none; font-size: 15px; color: #ffd166; margin-bottom: 8px; }
+      .retry-hint { font-size: 13px; color: rgba(255,255,255,0.4); margin-top: 14px; }
     </style>
   </head>
   <body>
@@ -385,12 +499,21 @@
         <span>Score: <strong id="score-val">0</strong></span>
         <span class="hud-best">Best: <strong id="best-val">0</strong></span>
         <span class="hud-level" id="level-val">Level 1</span>
+        <span id="daily-indicator">📅 DAILY RUN</span>
       </div>
       <button id="pause-btn">| |</button>
-      <div id="next-preview">
-        <div id="next-color-box"></div>
+      <button id="daily-btn" title="Daily Challenge">📅</button>
+      <div id="hold-preview"></div>
+      <div id="hold-label">HOLD [E]</div>
+      <div id="queue-preview">
+        <div class="q-slot" id="q-slot-0"></div>
+        <div class="q-slot small" id="q-slot-1"></div>
+        <div class="q-slot tiny" id="q-slot-2"></div>
       </div>
       <div id="next-label">NEXT</div>
+      <div id="danger-vignette"></div>
+      <div id="clutch-banner"></div>
+      <div id="badge-toast"></div>
       <div id="flash-overlay"></div>
       <div id="wall-warning"></div>
       <div id="zone-bar">
@@ -412,15 +535,19 @@
         <p>Score: <strong id="final-score">0</strong></p>
         <p class="best-line">Best: <strong id="final-best">0</strong></p>
         <div id="new-best">NEW BEST!</div>
+        <p id="run-stats"></p>
+        <p id="run-badges"></p>
+        <p id="daily-result"></p>
         <button id="restart-btn">Play Again</button>
+        <p class="retry-hint">Press R or ENTER for instant retry</p>
       </div>
       <div id="tutorial">
         <h2>CUBETRIS</h2>
         <div class="tut-line">Shoot colored cubes down the corridor.<br>Match <strong>3 or more</strong> of the same color to clear them!</div>
         <div class="tut-line">Chain combos for massive multipliers.</div>
-        <div class="tut-keys"><kbd>A</kbd> / <kbd>←</kbd> &nbsp; Move left &nbsp;&nbsp; <kbd>D</kbd> / <kbd>→</kbd> &nbsp; Move right &nbsp;&nbsp; <kbd>Space</kbd> &nbsp; Shoot &nbsp;&nbsp; <kbd>W</kbd> / <kbd>S</kbd> &nbsp; Quick drop &nbsp;&nbsp; <kbd>Q</kbd> &nbsp; Zone &nbsp;&nbsp; <kbd>Esc</kbd> &nbsp; Pause</div>
-        <div class="tut-line" style="font-size:14px; color:rgba(255,255,255,0.5);">Clear cubes to charge Zone. Activate to slow time!</div>
-        <div class="tut-keys">Mobile: drag to move, tap to shoot</div>
+        <div class="tut-keys"><kbd>A</kbd>/<kbd>←</kbd> <kbd>D</kbd>/<kbd>→</kbd> Move &nbsp; <kbd>Space</kbd> Shoot &nbsp; <kbd>W</kbd>/<kbd>S</kbd> Quick drop &nbsp; <kbd>E</kbd> Hold &nbsp; <kbd>Q</kbd> Zone &nbsp; <kbd>Esc</kbd> Pause</div>
+        <div class="tut-line" style="font-size:14px; color:rgba(255,255,255,0.5);">Clear cubes to charge Zone — activate to slow time. Hold banks a cube for later. Try the 📅 Daily Challenge — same board for everyone, once a day!</div>
+        <div class="tut-keys">Mobile: drag to move, tap to shoot, swipe down to quick-drop, tap HOLD box or Zone bar</div>
         <button id="tutorial-btn">GOT IT</button>
       </div>
     </div>
