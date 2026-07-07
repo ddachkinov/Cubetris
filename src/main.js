@@ -285,6 +285,45 @@ function playHeartbeat(time) {
   o.stop(time + 0.2);
 }
 
+// Weighty thud when a cube lands (immediate — impact must not feel laggy)
+function playLandSound() {
+  const now = audioCtx.currentTime;
+  const o = audioCtx.createOscillator();
+  o.type = 'sine';
+  o.frequency.setValueAtTime(180, now);
+  o.frequency.exponentialRampToValueAtTime(70, now + 0.08);
+  const g = audioCtx.createGain();
+  g.gain.setValueAtTime(0.15, now);
+  g.gain.exponentialRampToValueAtTime(0.001, now + 0.1);
+  o.connect(g).connect(audioCtx.destination);
+  o.start(now);
+  o.stop(now + 0.1);
+}
+
+// Low rumble as the wall grinds forward
+function playWallPushSound() {
+  const now = audioCtx.currentTime;
+  const dur = 0.35;
+  const size = Math.ceil(audioCtx.sampleRate * dur);
+  const buf = audioCtx.createBuffer(1, size, audioCtx.sampleRate);
+  const d = buf.getChannelData(0);
+  for (let i = 0; i < size; i++) {
+    d[i] = (Math.random() * 2 - 1) * (1 - i / size);
+  }
+  const src = audioCtx.createBufferSource();
+  src.buffer = buf;
+  const lp = audioCtx.createBiquadFilter();
+  lp.type = 'lowpass';
+  lp.frequency.setValueAtTime(300, now);
+  lp.frequency.exponentialRampToValueAtTime(90, now + dur);
+  const g = audioCtx.createGain();
+  g.gain.setValueAtTime(0.35, now);
+  g.gain.exponentialRampToValueAtTime(0.001, now + dur);
+  src.connect(lp).connect(g).connect(audioCtx.destination);
+  src.start(now);
+  src.stop(now + dur);
+}
+
 // Triumphant rising arp for clutch saves
 function playClutchSound() {
   const t0 = qTime();
@@ -422,6 +461,13 @@ let trailParticles = [];
 // Danger / clutch state
 let dangerActive = false;
 let slowMoTimer = 0;
+
+// Cube animation state (landing squash, wall-push tweens)
+let landingAnims = [];
+let wallAnims = [];
+
+// Clean-hit streak ("groove") — consecutive shots that immediately clear
+let cleanStreak = 0;
 
 // Run stats (per game) + lifetime stats + badges
 let runStats = { bestChain: 0, cleared: 0, zones: 0, clutches: 0 };
@@ -850,6 +896,7 @@ function placeCube(col, row, colorIndex) {
 function removeCube(col, row) {
   const cell = grid[col][row];
   if (!cell) return;
+  cancelWallAnimFor(cell.mesh);
   gameGroup.remove(cell.mesh);
   cell.mesh.geometry.dispose();
   cell.mesh.material.dispose();
@@ -983,6 +1030,7 @@ function applyGravity() {
         if (r !== writeRow) {
           grid[c][writeRow] = grid[c][r];
           grid[c][r] = null;
+          cancelWallAnimFor(grid[c][writeRow].mesh);
           grid[c][writeRow].mesh.position.z = rowToZ(writeRow);
         }
         writeRow--;
@@ -1197,6 +1245,50 @@ function updateTrailParticles(dt) {
   }
 }
 
+// ─── Landing squash & stretch ────────────────────────────────────────────────
+function startSquash(mesh) {
+  landingAnims.push({ mesh, t: 0 });
+}
+
+function updateLandingAnims(dt) {
+  for (let i = landingAnims.length - 1; i >= 0; i--) {
+    const a = landingAnims[i];
+    a.t += dt * 5;
+    if (a.t >= 1) {
+      a.mesh.scale.set(1, 1, 1);
+      landingAnims.splice(i, 1);
+    } else {
+      const s = Math.sin(Math.PI * a.t);
+      a.mesh.scale.set(1 + 0.25 * s, 1 - 0.35 * s, 1 + 0.25 * s);
+    }
+  }
+}
+
+// ─── Wall-push tween (rows grind forward instead of teleporting) ─────────────
+function pushWallAnim(mesh, toZ) {
+  wallAnims.push({ mesh, fromZ: mesh.position.z, toZ, t: 0 });
+}
+
+function cancelWallAnimFor(mesh) {
+  for (let i = wallAnims.length - 1; i >= 0; i--) {
+    if (wallAnims[i].mesh === mesh) wallAnims.splice(i, 1);
+  }
+}
+
+function updateWallAnims(dt) {
+  for (let i = wallAnims.length - 1; i >= 0; i--) {
+    const a = wallAnims[i];
+    a.t += dt * 3;
+    if (a.t >= 1) {
+      a.mesh.position.z = a.toZ;
+      wallAnims.splice(i, 1);
+    } else {
+      const e = 1 - Math.pow(1 - a.t, 3); // ease-out cubic
+      a.mesh.position.z = a.fromZ + (a.toZ - a.fromZ) * e;
+    }
+  }
+}
+
 // ─── Dynamic intensity ──────────────────────────────────────────────────────
 function updateDynamicIntensity(dt, chainStep) {
   // Intensity spikes on chains, decays over time
@@ -1250,9 +1342,15 @@ function checkLevelUp(clearedThisAction) {
     if (level >= 5) awardBadge('level-5', 'Survivor');
     if (level >= 10) awardBadge('level-10', 'Veteran');
 
-    levelUpEl.innerHTML = `LEVEL ${level}` + (themeChanged
-      ? `<div style="font-size:20px;letter-spacing:6px;margin-top:6px;">${THEMES[themeIdx].name}</div>`
-      : '');
+    // Tension-release pacing: level-up buys a calm breather before the
+    // next wall advance (negative timer = extra time)
+    wallAdvanceTimer = Math.min(wallAdvanceTimer, -4);
+
+    levelUpEl.innerHTML = `LEVEL ${level}`
+      + (themeChanged
+        ? `<div style="font-size:20px;letter-spacing:6px;margin-top:6px;">${THEMES[themeIdx].name}</div>`
+        : '')
+      + '<div style="font-size:13px;opacity:0.65;margin-top:4px;">WALL STABILIZED</div>';
     levelUpEl.style.display = 'block';
     levelUpEl.style.animation = 'none';
     void levelUpEl.offsetWidth;
@@ -1457,6 +1555,20 @@ function addScore(cleared, chainStep, rowClears) {
   checkLevelUp(cleared);
 }
 
+// ─── Clean-hit "groove" streak ───────────────────────────────────────────────
+// Consecutive shots that clear on impact build a groove — rewards precision
+// over quick-drop spam and gives skilled players a ceiling to chase.
+function registerCleanHit(col) {
+  cleanStreak++;
+  if (cleanStreak >= 2) {
+    const grooveBonus = cleanStreak * 10;
+    score += grooveBonus;
+    scoreEl.textContent = score;
+    spawnScorePopup(colToX(col), rowToZ(3), `GROOVE x${cleanStreak} +${grooveBonus}`, 'row-clear');
+    if (cleanStreak >= 5) awardBadge('groove-5', 'In The Groove');
+  }
+}
+
 // ─── Shooting ────────────────────────────────────────────────────────────────
 function shoot() {
   if (gameOver || paused || shootingCube) return;
@@ -1490,11 +1602,17 @@ function quickDrop() {
   if (row < 0) return;
 
   // Instant placement — no flight animation
-  placeCube(currentCol, row, currentColorIndex);
+  const landedCol = currentCol;
+  const cell = placeCube(currentCol, row, currentColorIndex);
+  if (cell) startSquash(cell.mesh);
+  playLandSound();
 
   const { totalCleared, chainStep, totalRowClears } = resolveMatches();
   if (totalCleared > 0) {
     addScore(totalCleared, chainStep, totalRowClears);
+    registerCleanHit(landedCol);
+  } else {
+    cleanStreak = 0;
   }
 
   currentColorIndex = nextQueue.shift();
@@ -1554,11 +1672,17 @@ function updateShooting(dt) {
     shootingCube.mesh.geometry.dispose();
     shootingCube.mesh.material.dispose();
 
-    placeCube(shootingCube.col, shootingCube.targetRow, shootingCube.colorIndex);
+    const landedCol = shootingCube.col;
+    const cell = placeCube(landedCol, shootingCube.targetRow, shootingCube.colorIndex);
+    if (cell) startSquash(cell.mesh);
+    playLandSound();
 
     const { totalCleared, chainStep, totalRowClears } = resolveMatches();
     if (totalCleared > 0) {
       addScore(totalCleared, chainStep, totalRowClears);
+      registerCleanHit(landedCol);
+    } else {
+      cleanStreak = 0;
     }
 
     shootingCube = null;
@@ -1577,11 +1701,15 @@ function advanceWall() {
     }
   }
 
+  // The wall grinding forward is an EVENT: rumble + shake + tweened motion
+  playWallPushSound();
+  triggerShake(0.08, 0.3);
+
   for (let c = 0; c < GRID_COLS; c++) {
     for (let r = 0; r < GRID_ROWS - 1; r++) {
       grid[c][r] = grid[c][r + 1];
       if (grid[c][r]) {
-        grid[c][r].mesh.position.z = rowToZ(r);
+        pushWallAnim(grid[c][r].mesh, rowToZ(r));
       }
     }
     grid[c][GRID_ROWS - 1] = null;
@@ -1589,7 +1717,13 @@ function advanceWall() {
 
   for (let c = 0; c < GRID_COLS; c++) {
     const ci = randomWallColorIndex();
-    placeCube(c, GRID_ROWS - 1, ci);
+    const cell = placeCube(c, GRID_ROWS - 1, ci);
+    if (cell) {
+      // New row slides in from behind the back wall with a pop
+      cell.mesh.position.z = rowToZ(GRID_ROWS - 1) + DEPTH_CELL;
+      pushWallAnim(cell.mesh, rowToZ(GRID_ROWS - 1));
+      startSquash(cell.mesh);
+    }
   }
 
   const { totalCleared, chainStep, totalRowClears } = resolveMatches();
@@ -1738,6 +1872,11 @@ function restartGame(asDaily = false) {
     dangerActive = false;
     document.body.classList.remove('danger');
   }
+
+  // Reset animations + streak
+  landingAnims = [];
+  wallAnims = [];
+  cleanStreak = 0;
 
   // Reset run stats + badges earned this run
   runStats = { bestChain: 0, cleared: 0, zones: 0, clutches: 0 };
@@ -2089,6 +2228,8 @@ function animate() {
     updateShooting(gameDt);
     updateParticles(dt); // particles always at full speed
     updateTrailParticles(dt);
+    updateLandingAnims(dt);
+    updateWallAnims(dt);
     updateSpecialCubeVisuals(dt);
     updateGhost();
 
