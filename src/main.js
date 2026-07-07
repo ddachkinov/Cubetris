@@ -57,102 +57,113 @@ window.addEventListener('touchstart', ensureAudio, { once: true });
 let lastExplosionTime = 0;
 const EXPLOSION_COOLDOWN = 0.04;
 
+// Layered debris explosion: crack transient + broadband body with a darkening
+// filter sweep + sub thump. The filter start point is randomized so repeated
+// explosions never sound identical (a big realism tell).
 function playExplosionSound() {
   const now = audioCtx.currentTime;
   if (now - lastExplosionTime < EXPLOSION_COOLDOWN) return;
   lastExplosionTime = now;
 
-  const duration = 0.25;
-  const bufferSize = audioCtx.sampleRate * duration;
-  const buffer = audioCtx.createBuffer(1, bufferSize, audioCtx.sampleRate);
-  const data = buffer.getChannelData(0);
-  for (let i = 0; i < bufferSize; i++) {
-    data[i] = (Math.random() * 2 - 1) * Math.exp(-i / (bufferSize * 0.15));
+  // 1. Crack — a few ms of bright noise, the "snap" of the break
+  const crackDur = 0.018;
+  const crackSize = Math.ceil(audioCtx.sampleRate * crackDur);
+  const crackBuf = audioCtx.createBuffer(1, crackSize, audioCtx.sampleRate);
+  const cd = crackBuf.getChannelData(0);
+  for (let i = 0; i < crackSize; i++) {
+    cd[i] = (Math.random() * 2 - 1) * Math.exp(-i / (crackSize * 0.18));
   }
-  const noise = audioCtx.createBufferSource();
-  noise.buffer = buffer;
+  const crack = audioCtx.createBufferSource();
+  crack.buffer = crackBuf;
+  const crackHp = audioCtx.createBiquadFilter();
+  crackHp.type = 'highpass';
+  crackHp.frequency.value = 2200;
+  const crackGain = audioCtx.createGain();
+  crackGain.gain.setValueAtTime(0.18, now);
+  crack.connect(crackHp).connect(crackGain).connect(audioCtx.destination);
+  crack.start(now);
+  crack.stop(now + crackDur);
 
-  const bandpass = audioCtx.createBiquadFilter();
-  bandpass.type = 'bandpass';
-  bandpass.frequency.setValueAtTime(800, now);
-  bandpass.frequency.exponentialRampToValueAtTime(200, now + duration);
-  bandpass.Q.value = 1.5;
+  // 2. Body — broadband rumble that darkens as fragments disperse
+  const bodyDur = 0.3;
+  const bodySize = Math.ceil(audioCtx.sampleRate * bodyDur);
+  const bodyBuf = audioCtx.createBuffer(1, bodySize, audioCtx.sampleRate);
+  const bd = bodyBuf.getChannelData(0);
+  for (let i = 0; i < bodySize; i++) {
+    bd[i] = (Math.random() * 2 - 1) * Math.exp(-i / (bodySize * 0.22));
+  }
+  const body = audioCtx.createBufferSource();
+  body.buffer = bodyBuf;
+  const bodyLp = audioCtx.createBiquadFilter();
+  bodyLp.type = 'lowpass';
+  bodyLp.frequency.setValueAtTime(3500 + Math.random() * 2000, now);
+  bodyLp.frequency.exponentialRampToValueAtTime(220, now + bodyDur);
+  bodyLp.Q.value = 0.7;
+  const bodyGain = audioCtx.createGain();
+  bodyGain.gain.setValueAtTime(0.3, now);
+  bodyGain.gain.exponentialRampToValueAtTime(0.001, now + bodyDur);
+  body.connect(bodyLp).connect(bodyGain).connect(audioCtx.destination);
+  body.start(now);
+  body.stop(now + bodyDur);
 
-  const gain = audioCtx.createGain();
-  gain.gain.setValueAtTime(0.35, now);
-  gain.gain.exponentialRampToValueAtTime(0.001, now + duration);
-
-  noise.connect(bandpass).connect(gain).connect(audioCtx.destination);
-  noise.start(now);
-  noise.stop(now + duration);
-
+  // 3. Sub thump — the weight of the impact
   const osc = audioCtx.createOscillator();
   osc.type = 'sine';
-  osc.frequency.setValueAtTime(150, now);
-  osc.frequency.exponentialRampToValueAtTime(40, now + 0.15);
+  osc.frequency.setValueAtTime(90, now);
+  osc.frequency.exponentialRampToValueAtTime(36, now + 0.16);
   const oscGain = audioCtx.createGain();
-  oscGain.gain.setValueAtTime(0.3, now);
-  oscGain.gain.exponentialRampToValueAtTime(0.001, now + 0.15);
+  oscGain.gain.setValueAtTime(0.28, now);
+  oscGain.gain.exponentialRampToValueAtTime(0.001, now + 0.18);
   osc.connect(oscGain).connect(audioCtx.destination);
   osc.start(now);
-  osc.stop(now + 0.15);
+  osc.stop(now + 0.18);
 }
 
 let lastBounceTime = 0;
-const BOUNCE_COOLDOWN = 0.025;
+const BOUNCE_COOLDOWN = 0.03;
 
+// Debris tick: a filtered-noise TAP, not a tone. Real fragments hitting a
+// floor read as dull clicks that blend into a scatter texture — so soft hits
+// are silent, only some bounces sound at all, and every tick sits at a
+// slightly different pitch. No oscillators = no beeping.
 function playBounceSound(velocity) {
   const now = audioCtx.currentTime;
   if (now - lastBounceTime < BOUNCE_COOLDOWN) return;
+
+  const impact = Math.min(1, Math.abs(velocity) / 6);
+  if (impact < 0.12) return; // too soft to hear
+  if (Math.random() < 0.45) return; // gate: scattered ticks, not machine-gun
   lastBounceTime = now;
 
-  const vol = Math.min(0.18, Math.abs(velocity) * 0.03);
-  if (vol < 0.005) return;
+  const vol = 0.015 + impact * 0.05;
+  const dur = 0.008 + Math.random() * 0.014;
 
-  const dur = 0.035;
-  const baseFreq = 3000 + Math.random() * 2000 + Math.abs(velocity) * 200;
-
-  const osc1 = audioCtx.createOscillator();
-  osc1.type = 'sine';
-  osc1.frequency.setValueAtTime(baseFreq, now);
-  osc1.frequency.exponentialRampToValueAtTime(baseFreq * 0.6, now + dur);
-  const g1 = audioCtx.createGain();
-  g1.gain.setValueAtTime(vol, now);
-  g1.gain.exponentialRampToValueAtTime(0.001, now + dur);
-  osc1.connect(g1).connect(audioCtx.destination);
-  osc1.start(now);
-  osc1.stop(now + dur);
-
-  const osc2 = audioCtx.createOscillator();
-  osc2.type = 'square';
-  const shellDur = dur * 0.5;
-  osc2.frequency.setValueAtTime(baseFreq * 1.5, now);
-  osc2.frequency.exponentialRampToValueAtTime(baseFreq, now + shellDur);
-  const g2 = audioCtx.createGain();
-  g2.gain.setValueAtTime(vol * 0.3, now);
-  g2.gain.exponentialRampToValueAtTime(0.001, now + shellDur);
-  osc2.connect(g2).connect(audioCtx.destination);
-  osc2.start(now);
-  osc2.stop(now + shellDur);
-
-  const noiseDur = 0.012;
-  const bufSize = Math.ceil(audioCtx.sampleRate * noiseDur);
-  const buf = audioCtx.createBuffer(1, bufSize, audioCtx.sampleRate);
+  const size = Math.ceil(audioCtx.sampleRate * dur);
+  const buf = audioCtx.createBuffer(1, size, audioCtx.sampleRate);
   const d = buf.getChannelData(0);
-  for (let i = 0; i < bufSize; i++) {
-    d[i] = (Math.random() * 2 - 1) * Math.exp(-i / (bufSize * 0.25));
+  for (let i = 0; i < size; i++) {
+    d[i] = (Math.random() * 2 - 1) * Math.exp(-i / (size * 0.2));
   }
-  const noiseSrc = audioCtx.createBufferSource();
-  noiseSrc.buffer = buf;
-  const hp = audioCtx.createBiquadFilter();
-  hp.type = 'highpass';
-  hp.frequency.value = 4000;
-  const gn = audioCtx.createGain();
-  gn.gain.setValueAtTime(vol * 0.5, now);
-  gn.gain.exponentialRampToValueAtTime(0.001, now + noiseDur);
-  noiseSrc.connect(hp).connect(gn).connect(audioCtx.destination);
-  noiseSrc.start(now);
-  noiseSrc.stop(now + noiseDur);
+  const src = audioCtx.createBufferSource();
+  src.buffer = buf;
+
+  // Harder impacts are brighter, but everything stays dull and woody
+  const bp = audioCtx.createBiquadFilter();
+  bp.type = 'bandpass';
+  bp.frequency.value = 700 + impact * 1300 + Math.random() * 700;
+  bp.Q.value = 1.1;
+
+  const lp = audioCtx.createBiquadFilter();
+  lp.type = 'lowpass';
+  lp.frequency.value = 3800;
+
+  const g = audioCtx.createGain();
+  g.gain.setValueAtTime(vol, now);
+  g.gain.exponentialRampToValueAtTime(0.001, now + dur);
+
+  src.connect(bp).connect(lp).connect(g).connect(audioCtx.destination);
+  src.start(now);
+  src.stop(now + dur);
 }
 
 function playLevelUpSound() {
@@ -965,25 +976,48 @@ function spawnParticles(col, row, colorIndex) {
       pColor = COLORS[colorIndex];
     }
 
-    const size = 0.08 + Math.random() * 0.14;
-    const geo = new THREE.BoxGeometry(size, size, size);
-    const mat = new THREE.MeshLambertMaterial({ color: pColor });
+    // Power-law size distribution: lots of small shards, occasional big chunk
+    const size = 0.06 + Math.pow(Math.random(), 2.2) * 0.22;
+    // Irregular shard shapes instead of perfect little cubes
+    const geo = new THREE.BoxGeometry(
+      size,
+      size * (0.5 + Math.random() * 0.9),
+      size * (0.5 + Math.random() * 0.9)
+    );
+    // Per-fragment shade variation so the debris doesn't look uniform
+    const shade = new THREE.Color(pColor).multiplyScalar(0.75 + Math.random() * 0.45);
+    const mat = new THREE.MeshLambertMaterial({ color: shade, transparent: true });
     const mesh = new THREE.Mesh(geo, mat);
-    mesh.position.set(cx, 0, cz);
+    // Fragments originate throughout the cube's volume, not its center point
+    mesh.position.set(
+      cx + (Math.random() - 0.5) * 0.7,
+      (Math.random() - 0.5) * 0.6,
+      cz + (Math.random() - 0.5) * 0.7
+    );
+    mesh.rotation.set(
+      Math.random() * Math.PI,
+      Math.random() * Math.PI,
+      Math.random() * Math.PI
+    );
     gameGroup.add(mesh);
 
-    const angle = (Math.PI * 2 * i) / count + Math.random() * 0.3;
+    const angle = (Math.PI * 2 * i) / count + Math.random() * 0.5;
     const speedMult = 1 + intensityLevel * 0.4;
-    const speed = (colorIndex === BOMB_INDEX ? (3.5 + Math.random() * 4) : (2.5 + Math.random() * 3.5)) * speedMult;
+    const speed = (colorIndex === BOMB_INDEX ? (3.5 + Math.random() * 4) : (2 + Math.random() * 3.5)) * speedMult;
+    // Tumble energy follows launch energy, on all three axes
+    const spin = speed * (0.8 + Math.random() * 1.6);
     particles.push({
       mesh,
       vx: Math.cos(angle) * speed,
-      vy: Math.abs(Math.sin(angle)) * speed * 0.8 + (colorIndex === BOMB_INDEX ? 3 : 2),
+      vy: Math.abs(Math.sin(angle)) * speed * 0.7 + 1.2 + Math.random() * 1.8 + (colorIndex === BOMB_INDEX ? 1.5 : 0),
       vz: Math.sin(angle) * speed * 0.5,
       life: 1.2 + Math.random() * 0.6,
       floorY: floorY + size / 2,
-      bounceDamping: 0.4 + Math.random() * 0.2,
-      spinSpeed: (Math.random() - 0.5) * 12,
+      bounceDamping: 0.35 + Math.random() * 0.2,
+      spinX: (Math.random() - 0.5) * spin,
+      spinY: (Math.random() - 0.5) * spin,
+      spinZ: (Math.random() - 0.5) * spin,
+      settled: false,
     });
   }
 }
@@ -999,18 +1033,41 @@ function updateParticles(dt) {
     if (p.mesh.position.y <= p.floorY && p.vy < 0) {
       playBounceSound(p.vy);
       p.mesh.position.y = p.floorY;
-      p.vy = -p.vy * p.bounceDamping;
-      p.vx *= 0.8;
-      p.vz *= 0.8;
+      if (Math.abs(p.vy) < 1.0) {
+        // Fragment has come to rest: no more bouncing or tumbling
+        p.settled = true;
+        p.vy = 0;
+      } else {
+        p.vy = -p.vy * p.bounceDamping;
+        // Each bounce bleeds energy from spin and slide
+        p.spinX *= 0.5;
+        p.spinY *= 0.5;
+        p.spinZ *= 0.5;
+        p.vx *= 0.75;
+        p.vz *= 0.75;
+      }
     }
 
-    p.mesh.rotation.x += p.spinSpeed * dt;
-    p.mesh.rotation.z += p.spinSpeed * 0.7 * dt;
+    if (p.settled) {
+      // Ground friction slides fragments to a stop — resting debris
+      // that keeps spinning is an instant fake-tell
+      const friction = Math.pow(0.02, dt);
+      p.vx *= friction;
+      p.vz *= friction;
+    } else {
+      p.mesh.rotation.x += p.spinX * dt;
+      p.mesh.rotation.y += p.spinY * dt;
+      p.mesh.rotation.z += p.spinZ * dt;
+    }
 
     p.life -= dt;
-    const fadeStart = 0.4;
-    const scale = p.life < fadeStart ? p.life / fadeStart : 1;
-    p.mesh.scale.setScalar(Math.max(0, scale));
+    // Debris keeps its size and fades out (sinking into the floor when at
+    // rest) instead of shrinking — shrinking reads as cartoon
+    const fadeStart = 0.35;
+    if (p.life < fadeStart) {
+      p.mesh.material.opacity = Math.max(0, p.life / fadeStart);
+      if (p.settled) p.mesh.position.y -= dt * 0.3;
+    }
 
     if (p.life <= 0) {
       gameGroup.remove(p.mesh);
