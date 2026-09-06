@@ -2272,7 +2272,17 @@ music.onBeat = (time) => {
   if (dangerActive && !gameOver && !paused) playHeartbeat(time);
 };
 
-const clock = new THREE.Clock();
+// Frame timer. THREE.Clock is deprecated in three 0.183; this is the same
+// contract (seconds since the previous call) without the console warning.
+const clock = {
+  _last: performance.now(),
+  getDelta() {
+    const now = performance.now();
+    const dt = (now - this._last) / 1000;
+    this._last = now;
+    return dt;
+  },
+};
 
 function animate() {
   requestAnimationFrame(animate);

@@ -480,7 +480,8 @@
         justify-content: center;
       }
       #daily-btn:hover { background: rgba(255,255,255,0.1); }
-      #daily-indicator {
+      /* Must out-specify `#hud span { display: block }` above */
+      #hud span#daily-indicator {
         display: none;
         color: #ffd166;
         font-size: 13px;
