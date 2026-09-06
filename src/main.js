@@ -593,15 +593,78 @@ const camera = new THREE.PerspectiveCamera(
   60,
   window.innerWidth / window.innerHeight,
   0.1,
-  50
+  80
 );
-camera.position.set(centerX, 2.5, -6);
-camera.lookAt(centerX, 0, FIELD_DEPTH * 0.4);
 
-let cameraTargetX = centerX;
-const CAMERA_LERP_SPEED = 8;
-const cameraBaseY = 2.5;
-const cameraBaseZ = -6;
+// ─── Camera framing ──────────────────────────────────────────────────────────
+// The board must be entirely on screen at every aspect ratio: on a phone in
+// portrait the danger rows are the ones you cannot afford to lose off the
+// bottom edge. So instead of a fixed position, the camera is *fitted* to the
+// board's bounding box — pull back until all eight corners are inside the
+// frustum, with a margin.
+//
+// Portrait wants a steep pitch (the board is 7 wide by 12 deep, which maps
+// naturally onto a tall screen) and a wide vertical FOV so the fit distance
+// stays close enough to keep real perspective. Landscape can sit lower and
+// keep more of the original corridor look.
+const FIT_MARGIN = 0.06;
+const PORTRAIT = { pitchDeg: 55, fov: 68 };
+const LANDSCAPE = { pitchDeg: 34, fov: 55 };
+
+// World-space bounds of everything that must stay visible: the 7x12 grid plus
+// the spawn cube in front of it, one cube-radius in every direction.
+const BOARD_BOUNDS = {
+  minX: -CUBE_SIZE, maxX: (GRID_COLS - 1) * COL_CELL + CUBE_SIZE,
+  minY: -CUBE_SIZE, maxY: CUBE_SIZE,
+  minZ: -1 - CUBE_SIZE, maxZ: (GRID_ROWS - 1) * DEPTH_CELL + CUBE_SIZE,
+};
+const boardCenterZ = (BOARD_BOUNDS.minZ + BOARD_BOUNDS.maxZ) / 2;
+
+// Where the camera sits when nothing is shaking it, set by fitCamera().
+const camBase = new THREE.Vector3();
+const camLookAt = new THREE.Vector3(centerX, 0, boardCenterZ);
+
+function fitCamera() {
+  const aspect = window.innerWidth / window.innerHeight;
+  const { pitchDeg, fov } = aspect < 1 ? PORTRAIT : LANDSCAPE;
+  const pitch = THREE.MathUtils.degToRad(pitchDeg);
+
+  camera.aspect = aspect;
+  camera.fov = fov;
+
+  const tanV = Math.tan(THREE.MathUtils.degToRad(fov) / 2) * (1 - FIT_MARGIN);
+  const tanH = tanV * aspect;
+
+  // Camera-space basis, with the camera on the near side looking down at the
+  // board: zAxis points from the look-at target back toward the camera.
+  const zAxis = new THREE.Vector3(0, Math.sin(pitch), -Math.cos(pitch));
+  const yAxis = new THREE.Vector3(0, Math.cos(pitch), Math.sin(pitch));
+  const xAxis = new THREE.Vector3(1, 0, 0);
+
+  // For a corner at camera-space (u.x, u.y, u.z), the camera must stand at
+  // distance d along zAxis such that the corner is inside both half-angles:
+  //   |u.x| <= (d - u.z) * tanH   and   |u.y| <= (d - u.z) * tanV
+  let dist = 0;
+  const corner = new THREE.Vector3();
+  for (const x of [BOARD_BOUNDS.minX, BOARD_BOUNDS.maxX]) {
+    for (const y of [BOARD_BOUNDS.minY, BOARD_BOUNDS.maxY]) {
+      for (const z of [BOARD_BOUNDS.minZ, BOARD_BOUNDS.maxZ]) {
+        corner.set(x - centerX, y, z - boardCenterZ);
+        const uz = corner.dot(zAxis);
+        dist = Math.max(
+          dist,
+          uz + Math.abs(corner.dot(xAxis)) / tanH,
+          uz + Math.abs(corner.dot(yAxis)) / tanV
+        );
+      }
+    }
+  }
+
+  camBase.copy(zAxis).multiplyScalar(dist).add(camLookAt);
+  camera.position.copy(camBase);
+  camera.lookAt(camLookAt);
+  camera.updateProjectionMatrix();
+}
 
 const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setSize(window.innerWidth, window.innerHeight);
@@ -839,7 +902,6 @@ function updateSpawnCube() {
     spawnMat.color.setHex(COLORS[currentColorIndex]);
     spawnMat.emissive.setHex(0x000000);
   }
-  cameraTargetX = colToX(currentCol);
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -1995,8 +2057,7 @@ function restartGame(asDaily = false) {
   updateHoldPreview();
   updateGhost();
 
-  cameraTargetX = colToX(currentCol);
-  camera.position.set(cameraTargetX, cameraBaseY, cameraBaseZ);
+  fitCamera();
 
   wallWarningEl.classList.remove('active');
   pauseScreen.style.display = 'none';
@@ -2218,8 +2279,7 @@ tutorialBtn.addEventListener('click', () => {
 
 // ─── Resize ──────────────────────────────────────────────────────────────────
 window.addEventListener('resize', () => {
-  camera.aspect = window.innerWidth / window.innerHeight;
-  camera.updateProjectionMatrix();
+  fitCamera();
   renderer.setSize(window.innerWidth, window.innerHeight);
 });
 
@@ -2260,6 +2320,7 @@ function updateSpecialCubeVisuals(dt) {
 initGrid();
 createGroundPlane();
 createGridVisual();
+fitCamera();
 applyTheme(0);
 updateSpawnCube();
 updateColumnHighlight();
@@ -2385,32 +2446,18 @@ function animate() {
     ghostMat.opacity = 0.18 + Math.sin(Date.now() * 0.005) * 0.1;
   }
 
-  // Dynamic FOV: widens slightly during intensity, narrows during zone
-  const targetFov = zoneActive ? 55 : (60 + intensityLevel * 8);
-  camera.fov += (targetFov - camera.fov) * Math.min(1, dt * 4);
-  camera.updateProjectionMatrix();
-
-  // Smooth camera tracking
-  const lerpFactor = 1 - Math.exp(-CAMERA_LERP_SPEED * dt);
-  camera.position.x += (cameraTargetX - camera.position.x) * lerpFactor;
-
-  // Screen shake
+  // Screen shake, applied as an offset from the fitted camera position so the
+  // board stays framed no matter how hard a chain hits.
+  camera.position.copy(camBase);
   if (shakeTimer > 0) {
     shakeTimer -= dt;
-    const t = shakeTimer > 0 ? shakeTimer : 0;
-    const decay = t / 0.3;
-    const ox = (Math.random() - 0.5) * shakeIntensity * decay * 2;
-    const oy = (Math.random() - 0.5) * shakeIntensity * decay * 2;
-    camera.position.y = cameraBaseY + oy;
-    camera.position.z = cameraBaseZ + ox;
-    if (shakeTimer <= 0) {
-      shakeIntensity = 0;
-      camera.position.y = cameraBaseY;
-      camera.position.z = cameraBaseZ;
-    }
+    const decay = Math.max(0, shakeTimer) / 0.3;
+    camera.position.x += (Math.random() - 0.5) * shakeIntensity * decay * 2;
+    camera.position.y += (Math.random() - 0.5) * shakeIntensity * decay * 2;
+    if (shakeTimer <= 0) shakeIntensity = 0;
   }
 
-  camera.lookAt(camera.position.x, 0, FIELD_DEPTH * 0.4);
+  camera.lookAt(camLookAt);
 
   renderer.render(scene, camera);
 }
