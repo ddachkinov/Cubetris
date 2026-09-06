@@ -9,7 +9,7 @@ const CUBE_SIZE = 1;
 const COL_CELL = CUBE_SIZE;
 const DEPTH_CELL = CUBE_SIZE;
 const FIELD_DEPTH = GRID_ROWS * DEPTH_CELL;
-const SHOOT_SPEED = 15;
+const SHOOT_SPEED = 40;
 const WALL_ADVANCE_INTERVAL_START = 12;
 const WALL_ADVANCE_INTERVAL_MIN = 2;
 const CLEARS_PER_LEVEL = 10;
@@ -462,7 +462,7 @@ let highScore = parseInt(localStorage.getItem('cubetris-best') || '0', 10);
 let rng = Math.random;
 let dailyMode = false;
 
-// Bag-based color dealing (like Tetris's 7-bag): 2 of each active color per
+// Bag-based color dealing: 2 of each active color per
 // bag, shuffled. Kills droughts/floods so the game feels fair.
 let colorBag = [];
 let bagColorCount = 0;
@@ -552,8 +552,9 @@ const wallWarningEl = document.getElementById('wall-warning');
 const levelUpEl = document.getElementById('level-up');
 const rowClearEl = document.getElementById('row-clear');
 const uiEl = document.getElementById('ui');
-const tutorialEl = document.getElementById('tutorial');
-const tutorialBtn = document.getElementById('tutorial-btn');
+const wallTimerEl = document.getElementById('wall-timer');
+const wallTimerFillEl = document.getElementById('wall-timer-fill');
+const hintEl = document.getElementById('hint');
 const pauseBtn = document.getElementById('pause-btn');
 const pauseScreen = document.getElementById('pause-screen');
 const resumeBtn = document.getElementById('resume-btn');
@@ -707,8 +708,8 @@ function rowToZ(row) {
 }
 
 // ─── Ground plane ────────────────────────────────────────────────────────────
-const EXTRA_COLS = 6;
-const EXTRA_ROWS = 3;
+const EXTRA_COLS = 2;
+const EXTRA_ROWS = 1;
 function createGroundPlane() {
   const totalWidth = gridWidth + EXTRA_COLS * 2 * COL_CELL + 4;
   const totalDepth = FIELD_DEPTH + EXTRA_ROWS * DEPTH_CELL + 8;
@@ -1728,8 +1729,20 @@ function registerCleanHit(col) {
 }
 
 // ─── Shooting ────────────────────────────────────────────────────────────────
+let queuedShot = false;
+
+// The tap that ends a run must not immediately start the next one
+const RETRY_GUARD_MS = 500;
+let gameOverAt = 0;
+
 function shoot() {
-  if (gameOver || paused || shootingCube) return;
+  if (gameOver || paused) return;
+  // Mid-flight input is buffered rather than dropped: at 40 u/s a shot lands
+  // in ~300ms, and swallowing a press in that window feels like a missed tap.
+  if (shootingCube) {
+    queuedShot = true;
+    return;
+  }
 
   const row = landingRow(currentCol);
   if (row < 0) return;
@@ -1753,36 +1766,7 @@ function shoot() {
   updateNextPreview();
 }
 
-function quickDrop() {
-  if (gameOver || paused || shootingCube) return;
-
-  const row = landingRow(currentCol);
-  if (row < 0) return;
-
-  // Instant placement — no flight animation
-  const landedCol = currentCol;
-  const cell = placeCube(currentCol, row, currentColorIndex);
-  if (cell) startSquash(cell.mesh);
-  playLandSound();
-
-  const { totalCleared, chainStep, totalRowClears } = resolveMatches();
-  if (totalCleared > 0) {
-    addScore(totalCleared, chainStep, totalRowClears);
-    registerCleanHit(landedCol);
-  } else {
-    cleanStreak = 0;
-  }
-
-  currentColorIndex = nextQueue.shift();
-  nextQueue.push(randomColorIndex());
-  holdUsedThisTurn = false;
-  updateSpawnCube();
-  updateNextPreview();
-
-  checkGameOver();
-}
-
-// ─── Hold / swap (the classic Tetris banking mechanic) ───────────────────────
+// ─── Hold / swap ─────────────────────────────────────────────────────────────
 // Bank the current cube for later; once per shot to prevent infinite cycling.
 function holdSwap() {
   if (gameOver || paused || shootingCube || holdUsedThisTurn) return;
@@ -1847,6 +1831,11 @@ function updateShooting(dt) {
     shootingVelocity = null;
 
     checkGameOver();
+
+    if (queuedShot) {
+      queuedShot = false;
+      if (!gameOver) shoot();
+    }
   }
 }
 
@@ -1904,6 +1893,8 @@ function checkGameOver() {
 
 function triggerGameOver() {
   gameOver = true;
+  gameOverAt = performance.now();
+  queuedShot = false;
   finalScoreEl.textContent = score;
 
   const isNewBest = score > highScore;
@@ -1949,7 +1940,7 @@ function restartGame(asDaily = false) {
   rng = dailyMode ? mulberry32(hashString('cubetris-' + todayKey())) : Math.random;
   colorBag = [];
   bagColorCount = 0;
-  dailyIndicatorEl.style.display = dailyMode ? 'block' : 'none';
+  dailyIndicatorEl.hidden = !dailyMode;
 
   for (let c = 0; c < GRID_COLS; c++) {
     for (let r = 0; r < GRID_ROWS; r++) {
@@ -2030,6 +2021,13 @@ function restartGame(asDaily = false) {
     dangerActive = false;
     document.body.classList.remove('danger');
   }
+
+  // Reset input + timer state
+  queuedShot = false;
+  aimPointerId = null;
+  idleTimer = 0;
+  wallTimerFillEl.style.transform = 'scaleX(1)';
+  wallTimerEl.classList.remove('imminent');
 
   // Reset animations + streak
   landingAnims = [];
@@ -2140,16 +2138,6 @@ window.addEventListener('keydown', (e) => {
       e.preventDefault();
       shoot();
       break;
-    case 'ArrowUp':
-    case 'KeyW':
-      e.preventDefault();
-      quickDrop();
-      break;
-    case 'ArrowDown':
-    case 'KeyS':
-      e.preventDefault();
-      quickDrop();
-      break;
     case 'KeyQ':
       e.preventDefault();
       activateZone();
@@ -2161,13 +2149,10 @@ window.addEventListener('keydown', (e) => {
   }
 });
 
-// ─── Touch controls ──────────────────────────────────────────────────────────
-let touchStartX = null;
-let touchStartY = null;
-let touchStartCol = null;
-let touchDragged = false;
-const DRAG_COL_PX = 40;
-
+// ─── Pointer aiming ──────────────────────────────────────────────────────────
+// One verb: put your thumb anywhere on the board, the cube snaps to that lane,
+// release to drop. No drag-accumulation, no separate quick-drop gesture, and
+// the same code path drives the mouse on desktop.
 let spawnScalePop = 0;
 
 function hapticPulse(ms = 10) {
@@ -2199,60 +2184,69 @@ function moveToColumn(newCol) {
   playTickSound();
 }
 
-// Taps on interactive UI (zone bar, hold box, buttons) must not shoot
-function isUiTarget(e) {
-  const t = e.target;
-  return t && t.closest && t.closest('#zone-bar, #hold-preview, #pause-btn, #daily-btn, button');
+// Taps on interactive UI (zone bar, hold box, buttons) must not fire a shot
+function isUiTarget(target) {
+  return target && target.closest
+    && target.closest('#zone-bar, #hold-preview, #pause-btn, #daily-btn, button');
 }
 
-window.addEventListener('touchstart', (e) => {
-  if (gameOver || paused) return;
-  if (isUiTarget(e)) {
-    touchStartX = null;
+const aimRaycaster = new THREE.Raycaster();
+const aimNdc = new THREE.Vector2();
+// The board floor, as a plane the pointer ray can be intersected with
+const aimPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), CUBE_SIZE / 2);
+const aimPoint = new THREE.Vector3();
+
+let aimPointerId = null;
+let aimCancelled = false;
+
+// Screen point -> board lane. Returns null when the ray misses the floor or
+// lands behind the near edge, which is how a shot gets cancelled.
+function laneFromPointer(clientX, clientY) {
+  aimNdc.x = (clientX / window.innerWidth) * 2 - 1;
+  aimNdc.y = -(clientY / window.innerHeight) * 2 + 1;
+  aimRaycaster.setFromCamera(aimNdc, camera);
+  if (!aimRaycaster.ray.intersectPlane(aimPlane, aimPoint)) return null;
+  if (aimPoint.z < BOARD_BOUNDS.minZ - 0.5) return null;
+  return Math.max(0, Math.min(GRID_COLS - 1, Math.round(aimPoint.x / COL_CELL)));
+}
+
+function onAimStart(e) {
+  if (gameOver) {
+    if (!isUiTarget(e.target) && performance.now() - gameOverAt > RETRY_GUARD_MS) {
+      restartGame(dailyMode);
+    }
     return;
   }
-  const t = e.touches[0];
-  touchStartX = t.clientX;
-  touchStartY = t.clientY;
-  touchStartCol = currentCol;
-  touchDragged = false;
-}, { passive: true });
+  if (paused || aimPointerId !== null) return;
+  if (isUiTarget(e.target)) return;
+  aimPointerId = e.pointerId;
+  aimCancelled = false;
+  dismissHint();
+  const lane = laneFromPointer(e.clientX, e.clientY);
+  if (lane !== null) moveToColumn(lane);
+}
 
-window.addEventListener('touchmove', (e) => {
-  if (gameOver || paused || touchStartX === null) return;
-  const t = e.touches[0];
-  const dx = t.clientX - touchStartX;
+function onAimMove(e) {
+  if (e.pointerId !== aimPointerId || gameOver || paused) return;
+  const lane = laneFromPointer(e.clientX, e.clientY);
+  // Dragging off the near edge of the board arms a cancel; coming back disarms
+  aimCancelled = lane === null;
+  if (lane !== null) moveToColumn(lane);
+}
 
-  const colShift = Math.round(-dx / DRAG_COL_PX);
-  const newCol = Math.max(0, Math.min(GRID_COLS - 1, touchStartCol + colShift));
+function onAimEnd(e) {
+  if (e.pointerId !== aimPointerId) return;
+  aimPointerId = null;
+  if (gameOver || paused || aimCancelled) return;
+  shoot();
+}
 
-  if (newCol !== currentCol) {
-    touchDragged = true;
-    moveToColumn(newCol);
-  }
-}, { passive: true });
-
-window.addEventListener('touchend', (e) => {
-  if (gameOver || paused || touchStartX === null) {
-    touchStartX = null;
-    return;
-  }
-  const t = e.changedTouches[0];
-  const dy = t.clientY - touchStartY;
-
-  if (!touchDragged && Math.abs(dy) < 30 && Math.abs(t.clientX - touchStartX) < 30) {
-    shoot();
-  } else if (!touchDragged && dy < -30) {
-    shoot();
-  } else if (!touchDragged && dy > 40) {
-    quickDrop(); // swipe down = instant placement
-  }
-
-  touchStartX = null;
-  touchStartY = null;
-  touchStartCol = null;
-  touchDragged = false;
-});
+window.addEventListener('pointerdown', onAimStart);
+window.addEventListener('pointermove', onAimMove);
+window.addEventListener('pointerup', onAimEnd);
+window.addEventListener('pointercancel', () => { aimPointerId = null; });
+// Stop the page itself from panning/zooming under the thumb
+window.addEventListener('touchmove', (e) => e.preventDefault(), { passive: false });
 
 restartBtn.addEventListener('click', () => restartGame(false));
 
@@ -2266,16 +2260,18 @@ dailyBtn.addEventListener('click', () => {
   restartGame(true);
 });
 
-// ─── Tutorial ─────────────────────────────────────────────────────────────────
-const tutorialSeen = localStorage.getItem('cubetris-tutorial-seen');
-if (!tutorialSeen) {
-  tutorialEl.style.display = 'flex';
+// ─── First-run hint ─────────────────────────────────────────────────────────
+// No tutorial screen. If a new player's board sits untouched, one line fades
+// in; the first touch dismisses it for good.
+let hintDismissed = localStorage.getItem('cubetris-hint-seen') === '1';
+let idleTimer = 0;
+
+function dismissHint() {
+  if (hintDismissed) return;
+  hintDismissed = true;
+  hintEl.classList.remove('show');
+  localStorage.setItem('cubetris-hint-seen', '1');
 }
-tutorialBtn.addEventListener('click', () => {
-  tutorialEl.style.display = 'none';
-  localStorage.setItem('cubetris-tutorial-seen', '1');
-  ensureAudio();
-});
 
 // ─── Resize ──────────────────────────────────────────────────────────────────
 window.addEventListener('resize', () => {
@@ -2392,6 +2388,11 @@ function animate() {
       document.body.classList.toggle('danger', dangerActive);
     }
 
+    if (!hintDismissed) {
+      idleTimer += dt;
+      hintEl.classList.toggle('show', idleTimer > 2.5);
+    }
+
     updateShooting(gameDt);
     updateParticles(dt); // particles always at full speed
     updateTrailParticles(dt);
@@ -2417,6 +2418,13 @@ function animate() {
     }
     const currentInterval = getWallInterval();
     const timeLeft = currentInterval - wallAdvanceTimer;
+
+    // The wall is no longer on a hidden clock: the bar drains for the whole
+    // interval and turns red for the last three seconds.
+    const remaining = Math.max(0, Math.min(1, timeLeft / currentInterval));
+    wallTimerFillEl.style.transform = `scaleX(${remaining})`;
+    wallTimerEl.classList.toggle('imminent', timeLeft <= 3);
+
     if (timeLeft <= 3 && timeLeft > 0) {
       wallWarningEl.classList.add('active');
     } else {

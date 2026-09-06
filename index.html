@@ -19,83 +19,109 @@
         height: 100%;
         pointer-events: none;
       }
-      #hud {
+      /* ─── Top bar ─────────────────────────────────────────────────
+         Everything the player reads at a glance lives in one row that
+         respects the notch/Dynamic Island and the home indicator. */
+      #topbar {
         position: absolute;
-        top: 20px;
-        left: 20px;
-        color: #fff;
-        font-size: 18px;
-      }
-      #hud span { display: block; margin-bottom: 6px; }
-      #hud .hud-best { color: rgba(255,255,255,0.45); font-size: 13px; }
-      #hud .hud-level { color: #7bf; font-size: 15px; font-weight: 700; }
-      /* 3-deep next queue */
-      #queue-preview {
-        position: absolute;
-        top: 20px;
-        right: 20px;
+        top: 0; left: 0; right: 0;
         display: flex;
-        flex-direction: column;
-        gap: 6px;
-        align-items: center;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 12px;
+        padding: calc(12px + env(safe-area-inset-top)) calc(16px + env(safe-area-inset-right))
+                 12px calc(16px + env(safe-area-inset-left));
+        color: #fff;
       }
-      .q-slot {
-        width: 48px;
-        height: 48px;
-        border-radius: 8px;
-        border: 2px solid rgba(255,255,255,0.3);
+      .bar-slot { display: flex; flex-direction: column; align-items: center; gap: 6px; }
+      .bar-slot.left { align-items: flex-start; }
+      .bar-slot.right { align-items: flex-end; }
+      .bar-caption {
+        font-size: 10px;
+        letter-spacing: 1.5px;
+        color: rgba(255,255,255,0.45);
       }
-      .q-slot.small { width: 36px; height: 36px; opacity: 0.75; }
-      .q-slot.tiny { width: 27px; height: 27px; opacity: 0.5; }
-      #next-label {
-        position: absolute;
-        top: 148px;
-        right: 20px;
-        width: 52px;
-        text-align: center;
-        color: rgba(255,255,255,0.6);
-        font-size: 11px;
+      #score-val {
+        font-size: 30px;
+        font-weight: 700;
+        font-variant-numeric: tabular-nums;
+        line-height: 1;
       }
-      /* Hold slot */
+      #score-sub {
+        font-size: 12px;
+        font-variant-numeric: tabular-nums;
+        color: rgba(255,255,255,0.5);
+      }
+      #level-val { color: #7bf; font-weight: 700; }
+      #daily-indicator { color: #ffd166; font-weight: 700; font-size: 13px; }
+      #daily-indicator[hidden] { display: none; }
+
+      /* Hold + next: colour chips, no keyboard letters */
       #hold-preview {
-        position: absolute;
-        top: 20px;
-        right: 90px;
-        width: 48px;
-        height: 48px;
-        border-radius: 8px;
+        width: 42px; height: 42px;
+        border-radius: 10px;
         border: 2px dashed rgba(255,255,255,0.35);
         pointer-events: auto;
         cursor: pointer;
       }
-      #hold-label {
-        position: absolute;
-        top: 74px;
-        right: 90px;
-        width: 52px;
-        text-align: center;
-        color: rgba(255,255,255,0.5);
-        font-size: 11px;
-      }
-      /* Pause button */
-      #pause-btn {
-        position: absolute;
-        top: 20px;
-        right: 160px;
-        width: 40px;
-        height: 40px;
-        border: 2px solid rgba(255,255,255,0.3);
-        border-radius: 8px;
-        background: rgba(0,0,0,0.3);
-        color: rgba(255,255,255,0.7);
-        font-size: 18px;
+      #queue-preview { display: flex; align-items: center; gap: 6px; }
+      .q-slot { width: 42px; height: 42px; border-radius: 10px; border: 2px solid rgba(255,255,255,0.3); }
+      .q-slot.small { width: 30px; height: 30px; opacity: 0.75; }
+      .q-slot.tiny { width: 22px; height: 22px; opacity: 0.5; }
+
+      /* Pause + daily: small glyphs, out of the way of the thumb */
+      .glyph-btn {
+        width: 34px; height: 34px;
+        border: 1px solid rgba(255,255,255,0.25);
+        border-radius: 9px;
+        background: rgba(0,0,0,0.25);
+        color: rgba(255,255,255,0.75);
+        font-size: 15px;
         cursor: pointer;
         pointer-events: auto;
-        display: flex;
-        align-items: center;
-        justify-content: center;
+        display: flex; align-items: center; justify-content: center;
       }
-      #pause-btn:hover { background: rgba(255,255,255,0.1); }
+      .glyph-btn:hover { background: rgba(255,255,255,0.1); }
+      #glyph-row { display: flex; gap: 8px; }
+
+      /* ─── Wall timer ──────────────────────────────────────────────
+         The wall was on a hidden timer with only a 3s border flash. It
+         is now always visible: a bar that drains toward the advance. */
+      #wall-timer {
+        position: absolute;
+        left: calc(16px + env(safe-area-inset-left));
+        right: calc(16px + env(safe-area-inset-right));
+        top: calc(74px + env(safe-area-inset-top));
+        height: 3px;
+        border-radius: 2px;
+        background: rgba(255,255,255,0.12);
+        overflow: hidden;
+      }
+      #wall-timer-fill {
+        height: 100%;
+        width: 100%;
+        transform-origin: left center;
+        background: #7bf;
+        transition: background-color 0.3s;
+      }
+      #wall-timer.imminent #wall-timer-fill { background: #ff4444; }
+
+      /* First-run hint — appears only if an untouched board sits idle */
+      #hint {
+        position: absolute;
+        left: 50%;
+        bottom: calc(64px + env(safe-area-inset-bottom));
+        transform: translateX(-50%);
+        padding: 10px 18px;
+        border-radius: 999px;
+        background: rgba(0,0,0,0.55);
+        color: rgba(255,255,255,0.9);
+        font-size: 14px;
+        white-space: nowrap;
+        opacity: 0;
+        transition: opacity 0.4s;
+      }
+      #hint.show { opacity: 1; }
       /* Pause screen */
       #pause-screen {
         display: none;
@@ -163,14 +189,6 @@
         margin-top: 10px;
       }
       #game-over-screen button:hover { background: #3a8eef; }
-      #column-indicator {
-        position: absolute;
-        bottom: 20px;
-        left: 50%;
-        transform: translateX(-50%);
-        color: rgba(255,255,255,0.6);
-        font-size: 14px;
-      }
       /* Score popups */
       .score-popup {
         position: absolute;
@@ -260,51 +278,11 @@
         0%, 100% { border-color: rgba(255, 34, 34, 0.15); }
         50%      { border-color: rgba(255, 34, 34, 0.6); }
       }
-      /* Tutorial overlay */
-      #tutorial {
-        display: none;
-        position: absolute;
-        top: 0; left: 0; width: 100%; height: 100%;
-        background: rgba(0,0,0,0.88);
-        color: #fff;
-        flex-direction: column;
-        align-items: center;
-        justify-content: center;
-        pointer-events: auto;
-        z-index: 100;
-        text-align: center;
-        gap: 18px;
-      }
-      #tutorial h2 { font-size: 36px; color: #7bf; margin-bottom: 4px; }
-      #tutorial .tut-line { font-size: 18px; color: rgba(255,255,255,0.8); line-height: 1.6; }
-      #tutorial .tut-keys { font-size: 15px; color: rgba(255,255,255,0.5); }
-      #tutorial .tut-keys kbd {
-        display: inline-block;
-        padding: 2px 8px;
-        border: 1px solid rgba(255,255,255,0.3);
-        border-radius: 4px;
-        background: rgba(255,255,255,0.08);
-        font-family: inherit;
-        font-size: 14px;
-        margin: 0 2px;
-      }
-      #tutorial button {
-        font-size: 22px;
-        padding: 14px 40px;
-        border: none;
-        border-radius: 8px;
-        background: #4a9eff;
-        color: #fff;
-        cursor: pointer;
-        margin-top: 10px;
-        font-weight: 700;
-      }
-      #tutorial button:hover { background: #3a8eef; }
       /* Zone bar */
       #zone-bar {
         position: absolute;
-        bottom: 50px;
-        left: 20px;
+        bottom: calc(50px + env(safe-area-inset-bottom));
+        left: calc(16px + env(safe-area-inset-left));
         width: 16px;
         height: 200px;
         background: rgba(255,255,255,0.1);
@@ -338,8 +316,8 @@
       }
       #zone-label {
         position: absolute;
-        bottom: 34px;
-        left: 12px;
+        bottom: calc(34px + env(safe-area-inset-bottom));
+        left: calc(12px + env(safe-area-inset-left));
         color: rgba(255,255,255,0.4);
         font-size: 10px;
         letter-spacing: 1px;
@@ -461,32 +439,6 @@
         80%  { opacity: 1; }
         100% { opacity: 0; transform: translateX(-50%) translateY(-10px); }
       }
-      /* Daily button */
-      #daily-btn {
-        position: absolute;
-        top: 20px;
-        right: 210px;
-        width: 40px;
-        height: 40px;
-        border: 2px solid rgba(255,255,255,0.3);
-        border-radius: 8px;
-        background: rgba(0,0,0,0.3);
-        color: rgba(255,255,255,0.8);
-        font-size: 18px;
-        cursor: pointer;
-        pointer-events: auto;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-      }
-      #daily-btn:hover { background: rgba(255,255,255,0.1); }
-      /* Must out-specify `#hud span { display: block }` above */
-      #hud span#daily-indicator {
-        display: none;
-        color: #ffd166;
-        font-size: 13px;
-        font-weight: 700;
-      }
       /* Game-over extras */
       #run-stats { font-size: 15px; color: rgba(255,255,255,0.65); margin-bottom: 6px; }
       #run-badges { font-size: 14px; color: #ffe055; margin-bottom: 10px; }
@@ -496,22 +448,31 @@
   </head>
   <body>
     <div id="ui">
-      <div id="hud">
-        <span>Score: <strong id="score-val">0</strong></span>
-        <span class="hud-best">Best: <strong id="best-val">0</strong></span>
-        <span class="hud-level" id="level-val">Level 1</span>
-        <span id="daily-indicator">📅 DAILY RUN</span>
+      <div id="topbar">
+        <div class="bar-slot left">
+          <div id="hold-preview"></div>
+          <span class="bar-caption">HOLD</span>
+        </div>
+        <div class="bar-slot">
+          <strong id="score-val">0</strong>
+          <span id="score-sub">Best <strong id="best-val">0</strong> · <span id="level-val">Level 1</span></span>
+          <span id="daily-indicator" hidden>DAILY RUN</span>
+          <div id="glyph-row">
+            <button id="pause-btn" class="glyph-btn" aria-label="Pause">| |</button>
+            <button id="daily-btn" class="glyph-btn" aria-label="Daily challenge">&#128197;</button>
+          </div>
+        </div>
+        <div class="bar-slot right">
+          <div id="queue-preview">
+            <div class="q-slot tiny" id="q-slot-2"></div>
+            <div class="q-slot small" id="q-slot-1"></div>
+            <div class="q-slot" id="q-slot-0"></div>
+          </div>
+          <span class="bar-caption">NEXT</span>
+        </div>
       </div>
-      <button id="pause-btn">| |</button>
-      <button id="daily-btn" title="Daily Challenge">📅</button>
-      <div id="hold-preview"></div>
-      <div id="hold-label">HOLD [E]</div>
-      <div id="queue-preview">
-        <div class="q-slot" id="q-slot-0"></div>
-        <div class="q-slot small" id="q-slot-1"></div>
-        <div class="q-slot tiny" id="q-slot-2"></div>
-      </div>
-      <div id="next-label">NEXT</div>
+      <div id="wall-timer"><div id="wall-timer-fill"></div></div>
+      <div id="hint">Drag to aim · release to drop</div>
       <div id="danger-vignette"></div>
       <div id="clutch-banner"></div>
       <div id="badge-toast"></div>
@@ -520,12 +481,11 @@
       <div id="zone-bar">
         <div id="zone-fill"></div>
       </div>
-      <div id="zone-label">ZONE [Q]</div>
+      <div id="zone-label">ZONE</div>
       <div id="zone-banner"></div>
       <div id="chain-counter"></div>
       <div id="level-up"></div>
       <div id="row-clear"></div>
-      <div id="column-indicator">← A/D → move | SPACE shoot | W/S quick drop | Q zone | ESC pause</div>
       <div id="pause-screen">
         <h1>PAUSED</h1>
         <button id="resume-btn">Resume</button>
@@ -540,16 +500,7 @@
         <p id="run-badges"></p>
         <p id="daily-result"></p>
         <button id="restart-btn">Play Again</button>
-        <p class="retry-hint">Press R or ENTER for instant retry</p>
-      </div>
-      <div id="tutorial">
-        <h2>CUBETRIS</h2>
-        <div class="tut-line">Shoot colored cubes down the corridor.<br>Match <strong>3 or more</strong> of the same color to clear them!</div>
-        <div class="tut-line">Chain combos for massive multipliers.</div>
-        <div class="tut-keys"><kbd>A</kbd>/<kbd>←</kbd> <kbd>D</kbd>/<kbd>→</kbd> Move &nbsp; <kbd>Space</kbd> Shoot &nbsp; <kbd>W</kbd>/<kbd>S</kbd> Quick drop &nbsp; <kbd>E</kbd> Hold &nbsp; <kbd>Q</kbd> Zone &nbsp; <kbd>Esc</kbd> Pause</div>
-        <div class="tut-line" style="font-size:14px; color:rgba(255,255,255,0.5);">Clear cubes to charge Zone — activate to slow time. Hold banks a cube for later. Try the 📅 Daily Challenge — same board for everyone, once a day!</div>
-        <div class="tut-keys">Mobile: drag to move, tap to shoot, swipe down to quick-drop, tap HOLD box or Zone bar</div>
-        <button id="tutorial-btn">GOT IT</button>
+        <p class="retry-hint">Tap the board to try again</p>
       </div>
     </div>
     <script type="module" src="/src/main.js"></script>
