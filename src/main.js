@@ -10,14 +10,17 @@ const COL_CELL = CUBE_SIZE;
 const DEPTH_CELL = CUBE_SIZE;
 const FIELD_DEPTH = GRID_ROWS * DEPTH_CELL;
 const SHOOT_SPEED = 40;
-const WALL_ADVANCE_INTERVAL_START = 12;
-const WALL_ADVANCE_INTERVAL_MIN = 2;
+// Wall interval decays geometrically instead of linearly: gentle at first,
+// steep in the middle, and it plateaus near the floor instead of hitting a
+// wall of death. See getWallInterval().
+const WALL_ADVANCE_INTERVAL_START = 10;
+const WALL_ADVANCE_INTERVAL_MIN = 2.5;
+const WALL_ADVANCE_DECAY = 0.9;
+// Level 1 is a short on-ramp (first level-up inside ~30s); every level after
+// costs the full ten.
+const CLEARS_FOR_LEVEL_1 = 6;
 const CLEARS_PER_LEVEL = 10;
 const ROW_CLEAR_BONUS = 200;
-const ZONE_CHARGE_MAX = 100;
-const ZONE_CHARGE_PER_CLEAR = 5;
-const ZONE_DURATION = 8; // seconds
-const ZONE_TIME_SCALE = 0.15; // 15% speed during zone
 const COLORS = [
   0xff4444, // red
   0x44bb44, // green
@@ -278,49 +281,6 @@ function playRowClearSound() {
   osc.stop(now + 0.3);
 }
 
-// ─── Zone activation sound ──────────────────────────────────────────────────
-function playZoneActivateSound() {
-  const now = audioCtx.currentTime;
-  // Ascending whoosh
-  const osc = audioCtx.createOscillator();
-  osc.type = 'sine';
-  osc.frequency.setValueAtTime(200, now);
-  osc.frequency.exponentialRampToValueAtTime(1200, now + 0.4);
-  const g = audioCtx.createGain();
-  g.gain.setValueAtTime(0.25, now);
-  g.gain.linearRampToValueAtTime(0.15, now + 0.2);
-  g.gain.exponentialRampToValueAtTime(0.001, now + 0.6);
-  osc.connect(g).connect(audioCtx.destination);
-  osc.start(now);
-  osc.stop(now + 0.6);
-
-  // Shimmering pad
-  const osc2 = audioCtx.createOscillator();
-  osc2.type = 'triangle';
-  osc2.frequency.setValueAtTime(800, now);
-  osc2.frequency.linearRampToValueAtTime(1000, now + 0.5);
-  const g2 = audioCtx.createGain();
-  g2.gain.setValueAtTime(0.12, now);
-  g2.gain.exponentialRampToValueAtTime(0.001, now + 0.8);
-  osc2.connect(g2).connect(audioCtx.destination);
-  osc2.start(now);
-  osc2.stop(now + 0.8);
-}
-
-function playZoneDeactivateSound() {
-  const now = audioCtx.currentTime;
-  const osc = audioCtx.createOscillator();
-  osc.type = 'sine';
-  osc.frequency.setValueAtTime(800, now);
-  osc.frequency.exponentialRampToValueAtTime(200, now + 0.3);
-  const g = audioCtx.createGain();
-  g.gain.setValueAtTime(0.2, now);
-  g.gain.exponentialRampToValueAtTime(0.001, now + 0.4);
-  osc.connect(g).connect(audioCtx.destination);
-  osc.start(now);
-  osc.stop(now + 0.4);
-}
-
 // Low thump played on the beat while in danger — synced via music.onBeat
 function playHeartbeat(time) {
   const o = audioCtx.createOscillator();
@@ -480,6 +440,10 @@ let gameOver = false;
 let paused = false;
 let particles = [];
 let wallAdvanceTimer = 0;
+// The wall doesn't start closing in until the player fires their first
+// shot -- a board that starts advancing before you've touched it teaches
+// the wrong lesson in the first second.
+let wallStarted = false;
 
 // Juice state
 let shakeTimer = 0;
@@ -489,21 +453,11 @@ let freezeTimer = 0;
 // Rainbow animation timer
 let rainbowTime = 0;
 
-// Zone (time-freeze) power-up state
-let zoneCharge = 0;
-let zoneActive = false;
-let zoneTimer = 0;
-let zoneClearedInZone = 0; // cubes cleared during zone for bonus
-
 // Dynamic intensity state
 let intensityLevel = 0; // 0-1 scale based on recent activity
 let lastChainStep = 0;
 let flashTimer = 0;
 let flashColor = 0xffffff;
-
-// Chain counter display state
-let chainDisplayTimer = 0;
-let chainDisplayStep = 0;
 
 // Shooting trail particles
 let trailParticles = [];
@@ -516,17 +470,14 @@ let slowMoTimer = 0;
 let landingAnims = [];
 let wallAnims = [];
 
-// Clean-hit streak ("groove") — consecutive shots that immediately clear
-let cleanStreak = 0;
-
-// Run stats (per game) + lifetime stats + badges
-let runStats = { bestChain: 0, cleared: 0, zones: 0, clutches: 0 };
+// Run stats (per run) + lifetime stats. Badges and Zone were cut in the App
+// Store rework: a hidden "save me" power-up and eight toasts with no screen
+// to view them added a system without adding a reason to come back.
+let runStats = { bestChain: 0, cleared: 0, clutches: 0 };
 let lifeStats = JSON.parse(
   localStorage.getItem('cubetris-stats')
-  || '{"cleared":0,"bestChain":0,"games":0,"zones":0,"clutches":0}'
+  || '{"cleared":0,"bestChain":0,"games":0}'
 );
-let badges = new Set(JSON.parse(localStorage.getItem('cubetris-badges') || '[]'));
-let runBadges = [];
 
 // ─── DOM refs ────────────────────────────────────────────────────────────────
 const scoreEl = document.getElementById('score-val');
@@ -542,9 +493,7 @@ const qSlot1 = document.getElementById('q-slot-1');
 const qSlot2 = document.getElementById('q-slot-2');
 const holdBoxEl = document.getElementById('hold-preview');
 const clutchEl = document.getElementById('clutch-banner');
-const badgeToastEl = document.getElementById('badge-toast');
 const runStatsEl = document.getElementById('run-stats');
-const runBadgesEl = document.getElementById('run-badges');
 const dailyResultEl = document.getElementById('daily-result');
 const dailyBtn = document.getElementById('daily-btn');
 const dailyIndicatorEl = document.getElementById('daily-indicator');
@@ -559,9 +508,6 @@ const pauseBtn = document.getElementById('pause-btn');
 const pauseScreen = document.getElementById('pause-screen');
 const resumeBtn = document.getElementById('resume-btn');
 const pauseRestartBtn = document.getElementById('pause-restart-btn');
-const zoneBarFill = document.getElementById('zone-fill');
-const zoneBarContainer = document.getElementById('zone-bar');
-const zoneBannerEl = document.getElementById('zone-banner');
 const chainCounterEl = document.getElementById('chain-counter');
 const flashOverlayEl = document.getElementById('flash-overlay');
 
@@ -907,14 +853,28 @@ function updateSpawnCube() {
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 function getActiveColorCount() {
-  if (level >= 4) return 5;
-  if (level >= 2) return 4;
+  // Two step-ups (3 colours, then 4, then 5) instead of three, each one a
+  // deliberate difficulty spike rather than smoothed-out ramp.
+  if (level >= 6) return 5;
+  if (level >= 3) return 4;
   return 3;
 }
 
 function getWallInterval() {
-  // Tied to level: starts at 12s, drops ~0.8s per level, floors at 2s
-  return Math.max(WALL_ADVANCE_INTERVAL_MIN, WALL_ADVANCE_INTERVAL_START - (level - 1) * 0.8);
+  // Geometric decay: gentle at first, steepest in the middle, and it settles
+  // near the floor instead of a linear ramp that eventually walls off a
+  // player who was keeping pace one level earlier.
+  return Math.max(
+    WALL_ADVANCE_INTERVAL_MIN,
+    WALL_ADVANCE_INTERVAL_START * Math.pow(WALL_ADVANCE_DECAY, level - 1)
+  );
+}
+
+// Cumulative clears -> level. Level 1 is a short on-ramp; every level after
+// costs the same as the last.
+function levelForClears(totalCleared) {
+  if (totalCleared < CLEARS_FOR_LEVEL_1) return 1;
+  return 2 + Math.floor((totalCleared - CLEARS_FOR_LEVEL_1) / CLEARS_PER_LEVEL);
 }
 
 // ─── Seeded RNG (Daily runs) ─────────────────────────────────────────────────
@@ -962,14 +922,33 @@ function drawColorFromBag() {
 
 function randomColorIndex() {
   // Special cubes at higher levels
-  if (level >= 6 && rng() < 0.04) return BOMB_INDEX;
+  if (level >= 7 && rng() < 0.04) return BOMB_INDEX;
   if (level >= 4 && rng() < 0.05) return RAINBOW_INDEX;
   return drawColorFromBag();
 }
 
-// Wall rows only get normal colors (not bag-dealt — walls should feel wild)
-function randomWallColorIndex() {
-  return Math.floor(rng() * getActiveColorCount());
+// A wall row that arrives with a free match already built in isn't a threat,
+// it's a gift the player didn't earn — so no three consecutive columns share
+// a colour. Not bag-dealt: unlike the player's queue, walls should still
+// feel wild column-to-column, just never a freebie.
+function generateWallRow(rngFn) {
+  const n = getActiveColorCount();
+  const row = [];
+  for (let c = 0; c < GRID_COLS; c++) {
+    let color;
+    let tries = 0;
+    do {
+      color = Math.floor(rngFn() * n);
+      tries++;
+    } while (
+      tries < 20
+      && row.length >= 2
+      && row[row.length - 1] === color
+      && row[row.length - 2] === color
+    );
+    row.push(color);
+  }
+  return row;
 }
 
 function createCubeMesh(colorIndex) {
@@ -995,6 +974,20 @@ function initGrid() {
       grid[c][r] = null;
     }
   }
+}
+
+// The board used to start empty: nothing arrived until the wall's first
+// advance, and the 2-per-colour bag meant a first match usually needed 4-6
+// shots. Instead, seed two cubes of the colour the player is about to fire,
+// one lane apart, at the far row. Whichever lane they aim first or second,
+// the gap between the seeds completes a match on contact -- a guaranteed
+// clear inside the first two shots, no matter how the bag shuffled.
+function seedOpeningRows() {
+  const seedColor = currentColorIndex < COLORS.length ? currentColorIndex : nextQueue[0];
+  const col = 2 + Math.floor(rng() * (GRID_COLS - 4));
+  placeCube(col, GRID_ROWS - 1, seedColor);
+  placeCube(col + 2, GRID_ROWS - 1, seedColor);
+  // col + 1 stays open: a shot there lands between the two seeds and clears.
 }
 
 function placeCube(col, row, colorIndex) {
@@ -1180,24 +1173,6 @@ function updateParticles(dt) {
   }
 }
 
-// ─── Gravity ─────────────────────────────────────────────────────────────────
-function applyGravity() {
-  for (let c = 0; c < GRID_COLS; c++) {
-    let writeRow = GRID_ROWS - 1;
-    for (let r = GRID_ROWS - 1; r >= 0; r--) {
-      if (grid[c][r]) {
-        if (r !== writeRow) {
-          grid[c][writeRow] = grid[c][r];
-          grid[c][r] = null;
-          cancelWallAnimFor(grid[c][writeRow].mesh);
-          grid[c][writeRow].mesh.position.z = rowToZ(writeRow);
-        }
-        writeRow--;
-      }
-    }
-  }
-}
-
 // ─── Screen shake + hit-freeze ───────────────────────────────────────────────
 function triggerShake(intensity, duration) {
   shakeIntensity = Math.max(shakeIntensity, intensity);
@@ -1229,144 +1204,55 @@ function isInDanger() {
 function triggerClutch() {
   slowMoTimer = 0.7;
   const bonus = 150;
-  score += bonus;
-  scoreEl.textContent = score;
+  addPoints(bonus);
   runStats.clutches++;
-  lifeStats.clutches = (lifeStats.clutches || 0) + 1;
-  awardBadge('clutch-1', 'Clutch Save');
-
-  clutchEl.textContent = `CLUTCH! +${bonus}`;
-  clutchEl.style.display = 'block';
-  clutchEl.style.animation = 'none';
-  void clutchEl.offsetWidth;
-  clutchEl.style.animation = 'rowclear 1.1s ease-out forwards';
-  clutchEl.addEventListener('animationend', () => {
-    clutchEl.style.display = 'none';
-  }, { once: true });
 
   playClutchSound();
   triggerFlash(0x66ffe0, 0.2);
   triggerShake(0.18, 0.3);
   hapticPulse(40);
+
+  announce(() => {
+    clutchEl.textContent = `CLUTCH! +${bonus}`;
+    clutchEl.style.display = 'block';
+    clutchEl.style.animation = 'none';
+    void clutchEl.offsetWidth;
+    clutchEl.style.animation = 'rowclear 1.1s ease-out forwards';
+    clutchEl.addEventListener('animationend', () => {
+      clutchEl.style.display = 'none';
+    }, { once: true });
+  }, 1100, true);
 }
 
-// ─── Badges + lifetime stats ────────────────────────────────────────────────
+// ─── Lifetime stats ──────────────────────────────────────────────────────────
 function saveLifeStats() {
   localStorage.setItem('cubetris-stats', JSON.stringify(lifeStats));
-}
-
-function awardBadge(id, label) {
-  if (badges.has(id)) return;
-  badges.add(id);
-  runBadges.push(label);
-  localStorage.setItem('cubetris-badges', JSON.stringify([...badges]));
-  showBadgeToast(label);
-}
-
-function showBadgeToast(label) {
-  badgeToastEl.textContent = `🏅 BADGE: ${label}`;
-  badgeToastEl.style.display = 'block';
-  badgeToastEl.style.animation = 'none';
-  void badgeToastEl.offsetWidth;
-  badgeToastEl.style.animation = 'badge-in 2.2s ease-out forwards';
-  badgeToastEl.addEventListener('animationend', () => {
-    badgeToastEl.style.display = 'none';
-  }, { once: true });
-}
-
-// ─── Zone power-up ──────────────────────────────────────────────────────────
-function updateZoneBar() {
-  const pct = Math.min(100, (zoneCharge / ZONE_CHARGE_MAX) * 100);
-  zoneBarFill.style.height = pct + '%';
-  if (zoneActive) {
-    zoneBarContainer.className = 'active';
-    const zonePct = Math.min(100, (zoneTimer / ZONE_DURATION) * 100);
-    zoneBarFill.style.height = zonePct + '%';
-  } else if (zoneCharge >= ZONE_CHARGE_MAX) {
-    zoneBarContainer.className = 'charged';
-  } else {
-    zoneBarContainer.className = '';
-  }
-}
-
-function activateZone() {
-  if (zoneCharge < ZONE_CHARGE_MAX || zoneActive || gameOver || paused) return;
-  zoneActive = true;
-  zoneTimer = ZONE_DURATION;
-  zoneCharge = 0;
-  zoneClearedInZone = 0;
-  document.body.classList.add('zone-active');
-
-  zoneBannerEl.textContent = 'Z O N E';
-  zoneBannerEl.style.display = 'block';
-  zoneBannerEl.style.animation = 'none';
-  void zoneBannerEl.offsetWidth;
-  zoneBannerEl.style.animation = 'zone-activate 1.4s ease-out forwards';
-  zoneBannerEl.addEventListener('animationend', () => {
-    zoneBannerEl.style.display = 'none';
-  }, { once: true });
-
-  playZoneActivateSound();
-  music.setZoneFilter(true); // underwater lowpass while time is slowed
-  runStats.zones++;
-  lifeStats.zones = (lifeStats.zones || 0) + 1;
-  awardBadge('zone-1', 'In The Zone');
-  triggerShake(0.2, 0.3);
-  triggerFlash(0xffcc00, 0.25);
-  hapticPulse(30);
-  updateZoneBar();
-}
-
-function deactivateZone() {
-  zoneActive = false;
-  document.body.classList.remove('zone-active');
-  music.setZoneFilter(false);
-  playZoneDeactivateSound();
-
-  // Bonus score for cubes cleared during zone
-  if (zoneClearedInZone > 0) {
-    const bonus = zoneClearedInZone * 15;
-    score += bonus;
-    scoreEl.textContent = score;
-    spawnScorePopup(colToX(3), rowToZ(6), `ZONE +${bonus}`, 'combo');
-  }
-  updateZoneBar();
-}
-
-function chargeZone(clearedCount) {
-  if (zoneActive) {
-    zoneClearedInZone += clearedCount;
-    return;
-  }
-  zoneCharge = Math.min(ZONE_CHARGE_MAX, zoneCharge + clearedCount * ZONE_CHARGE_PER_CLEAR);
-  updateZoneBar();
 }
 
 // ─── Chain counter display ──────────────────────────────────────────────────
 function showChainCounter(step) {
   if (step < 2) return;
-  chainDisplayStep = step;
-  chainDisplayTimer = 1.2;
+  announce(() => {
+    const labels = ['', '', 'DOUBLE', 'TRIPLE', 'QUAD', 'PENTA', 'HEXA', 'MEGA', 'ULTRA', 'INSANE'];
+    const label = step < labels.length ? labels[step] : `${step}x CHAIN`;
 
-  const labels = ['', '', 'DOUBLE', 'TRIPLE', 'QUAD', 'PENTA', 'HEXA', 'MEGA', 'ULTRA', 'INSANE'];
-  const label = step < labels.length ? labels[step] : `${step}x CHAIN`;
+    chainCounterEl.textContent = `${label}!`;
+    chainCounterEl.style.display = 'block';
+    chainCounterEl.style.animation = 'none';
+    void chainCounterEl.offsetWidth;
 
-  chainCounterEl.textContent = `${label}!`;
-  chainCounterEl.style.display = 'block';
-  chainCounterEl.style.animation = 'none';
-  void chainCounterEl.offsetWidth;
+    // Color escalation based on chain step
+    const colors = ['', '', '#ff6ef5', '#ff4444', '#ffcc00', '#44ff88', '#4488ff', '#ffffff'];
+    const color = step < colors.length ? colors[step] : '#ffffff';
+    chainCounterEl.style.color = color;
+    chainCounterEl.style.textShadow = `0 0 20px ${color}, 0 0 40px ${color}`;
+    chainCounterEl.style.fontSize = Math.min(72, 40 + step * 8) + 'px';
 
-  // Color escalation based on chain step
-  const colors = ['', '', '#ff6ef5', '#ff4444', '#ffcc00', '#44ff88', '#4488ff', '#ffffff'];
-  const color = step < colors.length ? colors[step] : '#ffffff';
-  chainCounterEl.style.color = color;
-  chainCounterEl.style.textShadow = `0 0 20px ${color}, 0 0 40px ${color}`;
-  chainCounterEl.style.fontSize = Math.min(72, 40 + step * 8) + 'px';
-
-  chainCounterEl.style.animation = 'chain-pop 1.2s ease-out forwards';
-  chainCounterEl.addEventListener('animationend', () => {
-    chainCounterEl.style.display = 'none';
-  }, { once: true });
+    chainCounterEl.style.animation = 'chain-pop 1.2s ease-out forwards';
+    chainCounterEl.addEventListener('animationend', () => {
+      chainCounterEl.style.display = 'none';
+    }, { once: true });
+  }, 1200);
 }
 
 // ─── Shooting trail particles ───────────────────────────────────────────────
@@ -1423,9 +1309,15 @@ function updateLandingAnims(dt) {
   }
 }
 
-// ─── Wall-push tween (rows grind forward instead of teleporting) ─────────────
-function pushWallAnim(mesh, toZ) {
-  wallAnims.push({ mesh, fromZ: mesh.position.z, toZ, t: 0 });
+// ─── Mesh-position tween (rows grind forward, cleared columns fall) ─────────
+// One mechanism, two speeds: the wall entering a row is a ~330ms grind
+// (speed 3), a cascade step's gravity is a snappier ~120ms drop (speed
+// CASCADE_FALL_SPEED). Always cancels any tween already running on this
+// mesh first, so gravity landing on a still-sliding wall row (or vice
+// versa) replaces it cleanly instead of the two fighting over one mesh.
+function pushWallAnim(mesh, toZ, speed = 3) {
+  cancelWallAnimFor(mesh);
+  wallAnims.push({ mesh, fromZ: mesh.position.z, toZ, t: 0, speed });
 }
 
 function cancelWallAnimFor(mesh) {
@@ -1437,7 +1329,7 @@ function cancelWallAnimFor(mesh) {
 function updateWallAnims(dt) {
   for (let i = wallAnims.length - 1; i >= 0; i--) {
     const a = wallAnims[i];
-    a.t += dt * 3;
+    a.t += dt * a.speed;
     if (a.t >= 1) {
       a.mesh.position.z = a.toZ;
       wallAnims.splice(i, 1);
@@ -1485,10 +1377,36 @@ function updateDynamicIntensity(dt, chainStep) {
   music.update(dt);
 }
 
+// ─── Announcer queue ─────────────────────────────────────────────────────────
+// Level-up, row-clear, and chain banners used to be five independently
+// timed DOM elements at slightly different screen heights; a fast cascade
+// left two or three visible at once. Now there is one slot: each banner is
+// a queued job with a fixed duration, shown one at a time. Level-up jumps
+// the line since it is the rarest and the one the player most needs to see.
+const announceQueue = [];
+let announceBusy = false;
+
+function announce(showFn, durationMs, priority = false) {
+  if (priority) announceQueue.unshift({ showFn, durationMs });
+  else announceQueue.push({ showFn, durationMs });
+  pumpAnnouncer();
+}
+
+function pumpAnnouncer() {
+  if (announceBusy || announceQueue.length === 0) return;
+  const job = announceQueue.shift();
+  announceBusy = true;
+  job.showFn();
+  setTimeout(() => {
+    announceBusy = false;
+    pumpAnnouncer();
+  }, job.durationMs);
+}
+
 // ─── Level progression ───────────────────────────────────────────────────────
 function checkLevelUp(clearedThisAction) {
   totalClearedCount += clearedThisAction;
-  const newLevel = Math.floor(totalClearedCount / CLEARS_PER_LEVEL) + 1;
+  const newLevel = levelForClears(totalClearedCount);
   if (newLevel > level) {
     level = newLevel;
     levelEl.textContent = `Level ${level}`;
@@ -1498,234 +1416,255 @@ function checkLevelUp(clearedThisAction) {
     const themeChanged = themeIdx !== currentThemeIndex;
     if (themeChanged) applyTheme(themeIdx);
 
-    if (level >= 5) awardBadge('level-5', 'Survivor');
-    if (level >= 10) awardBadge('level-10', 'Veteran');
-
     // Tension-release pacing: level-up buys a calm breather before the
     // next wall advance (negative timer = extra time)
     wallAdvanceTimer = Math.min(wallAdvanceTimer, -4);
 
-    levelUpEl.innerHTML = `LEVEL ${level}`
-      + (themeChanged
-        ? `<div style="font-size:20px;letter-spacing:6px;margin-top:6px;">${THEMES[themeIdx].name}</div>`
-        : '')
-      + '<div style="font-size:13px;opacity:0.65;margin-top:4px;">WALL STABILIZED</div>';
-    levelUpEl.style.display = 'block';
-    levelUpEl.style.animation = 'none';
-    void levelUpEl.offsetWidth;
-    levelUpEl.style.animation = 'lvlup 1.4s ease-out forwards';
-    levelUpEl.addEventListener('animationend', () => {
-      levelUpEl.style.display = 'none';
-    }, { once: true });
-
     playLevelUpSound();
     triggerShake(0.15, 0.3);
+
+    const bannerLevel = level;
+    announce(() => {
+      levelUpEl.innerHTML = `LEVEL ${bannerLevel}`
+        + (themeChanged
+          ? `<div style="font-size:20px;letter-spacing:6px;margin-top:6px;">${THEMES[themeIdx].name}</div>`
+          : '')
+        + '<div style="font-size:13px;opacity:0.65;margin-top:4px;">WALL STABILIZED</div>';
+      levelUpEl.style.display = 'block';
+      levelUpEl.style.animation = 'none';
+      void levelUpEl.offsetWidth;
+      levelUpEl.style.animation = 'lvlup 1.4s ease-out forwards';
+      levelUpEl.addEventListener('animationend', () => {
+        levelUpEl.style.display = 'none';
+      }, { once: true });
+    }, 1400, true);
   }
 }
 
 // ─── Row clear banner ────────────────────────────────────────────────────────
 function showRowClearBanner(count) {
-  const text = count > 1 ? `${count}x ROW CLEAR! +${count * ROW_CLEAR_BONUS}` : `ROW CLEAR! +${ROW_CLEAR_BONUS}`;
-  rowClearEl.textContent = text;
-  rowClearEl.style.display = 'block';
-  rowClearEl.style.animation = 'none';
-  void rowClearEl.offsetWidth;
-  rowClearEl.style.animation = 'rowclear 1s ease-out forwards';
-  rowClearEl.addEventListener('animationend', () => {
-    rowClearEl.style.display = 'none';
-  }, { once: true });
   playRowClearSound();
+  announce(() => {
+    rowClearEl.textContent = count > 1
+      ? `${count}x ROW CLEAR! +${count * ROW_CLEAR_BONUS}`
+      : `ROW CLEAR! +${ROW_CLEAR_BONUS}`;
+    rowClearEl.style.display = 'block';
+    rowClearEl.style.animation = 'none';
+    void rowClearEl.offsetWidth;
+    rowClearEl.style.animation = 'rowclear 1s ease-out forwards';
+    rowClearEl.addEventListener('animationend', () => {
+      rowClearEl.style.display = 'none';
+    }, { once: true });
+  }, 1000);
 }
 
-// ─── Chain-check (with combos, bombs, row clears) ────────────────────────────
-function resolveMatches() {
-  const dangerBefore = isInDanger();
-  let totalCleared = 0;
-  let chainStep = 0;
-  let changed = true;
-  let totalRowClears = 0;
-  let anyBombsDetonated = false;
+function addPoints(n) {
+  score += n;
+  scoreEl.textContent = score;
+}
 
-  while (changed) {
-    changed = false;
-    const toRemove = new Set();
+// ─── Removal detection (one cascade step) ────────────────────────────────────
+// Pure read of the current grid: rainbow cross-clears, flood-filled colour
+// groups of 3+, and any bombs adjacent to what's already being removed
+// (chained up to 10 times so a bomb can trigger a bomb). Returns the set of
+// "col,row" keys to remove this step, plus whether a bomb went off.
+function computeRemovalSet() {
+  const toRemove = new Set();
 
-    // 0. Rainbow activation: cross-clear (itself + 4 orthogonal neighbors)
-    for (let c = 0; c < GRID_COLS; c++) {
-      for (let r = 0; r < GRID_ROWS; r++) {
-        const cell = grid[c][r];
-        if (cell && cell.colorIndex === RAINBOW_INDEX) {
-          toRemove.add(`${c},${r}`);
-          [[c - 1, r], [c + 1, r], [c, r - 1], [c, r + 1]].forEach(([nc, nr]) => {
-            if (nc >= 0 && nc < GRID_COLS && nr >= 0 && nr < GRID_ROWS && grid[nc][nr]) {
-              toRemove.add(`${nc},${nr}`);
-            }
-          });
-        }
-      }
-    }
-
-    // 1. Find color matches
-    for (let c = 0; c < GRID_COLS; c++) {
-      for (let r = 0; r < GRID_ROWS; r++) {
-        if (!grid[c][r]) continue;
-        const group = findMatchGroup(c, r);
-        if (group.length >= 3) {
-          group.forEach((g) => toRemove.add(`${g.col},${g.row}`));
-        }
-      }
-    }
-
-    // 2. Bomb chain detonation — bombs adjacent to removed cells explode
-    if (toRemove.size > 0) {
-      for (let iter = 0; iter < 10; iter++) {
-        const bombKeys = [];
-        for (let c = 0; c < GRID_COLS; c++) {
-          for (let r = 0; r < GRID_ROWS; r++) {
-            const cell = grid[c][r];
-            if (!cell || cell.colorIndex !== BOMB_INDEX) continue;
-            if (toRemove.has(`${c},${r}`)) continue;
-            // Check if any neighbor is being removed
-            const adj = [[c - 1, r], [c + 1, r], [c, r - 1], [c, r + 1]];
-            const triggered = adj.some(([ac, ar]) => toRemove.has(`${ac},${ar}`));
-            if (triggered) bombKeys.push([c, r]);
-          }
-        }
-        if (bombKeys.length === 0) break;
-        anyBombsDetonated = true;
-        bombKeys.forEach(([bc, br]) => {
-          for (let dc = -1; dc <= 1; dc++) {
-            for (let dr = -1; dr <= 1; dr++) {
-              const nc = bc + dc, nr = br + dr;
-              if (nc >= 0 && nc < GRID_COLS && nr >= 0 && nr < GRID_ROWS && grid[nc][nr]) {
-                toRemove.add(`${nc},${nr}`);
-              }
-            }
+  for (let c = 0; c < GRID_COLS; c++) {
+    for (let r = 0; r < GRID_ROWS; r++) {
+      const cell = grid[c][r];
+      if (cell && cell.colorIndex === RAINBOW_INDEX) {
+        toRemove.add(`${c},${r}`);
+        [[c - 1, r], [c + 1, r], [c, r - 1], [c, r + 1]].forEach(([nc, nr]) => {
+          if (nc >= 0 && nc < GRID_COLS && nr >= 0 && nr < GRID_ROWS && grid[nc][nr]) {
+            toRemove.add(`${nc},${nr}`);
           }
         });
       }
     }
+  }
 
-    if (toRemove.size > 0) {
-      changed = true;
-      chainStep++;
-
-      // 3. Check for full row clears (all GRID_COLS cells in a row removed)
-      for (let r = 0; r < GRID_ROWS; r++) {
-        let allCols = true;
-        for (let c = 0; c < GRID_COLS; c++) {
-          if (!toRemove.has(`${c},${r}`)) {
-            allCols = false;
-            break;
-          }
-        }
-        if (allCols) totalRowClears++;
+  for (let c = 0; c < GRID_COLS; c++) {
+    for (let r = 0; r < GRID_ROWS; r++) {
+      if (!grid[c][r]) continue;
+      const group = findMatchGroup(c, r);
+      if (group.length >= 3) {
+        group.forEach((g) => toRemove.add(`${g.col},${g.row}`));
       }
-
-      // 4. Process removals
-      let sumX = 0, sumZ = 0, count = 0;
-      toRemove.forEach((key) => {
-        const [c, r] = key.split(',').map(Number);
-        const cell = grid[c][r];
-        if (cell) {
-          sumX += colToX(c);
-          sumZ += rowToZ(r);
-          count++;
-          spawnParticles(c, r, cell.colorIndex);
-          removeCube(c, r);
-          totalCleared++;
-        }
-      });
-      if (count > 0) {
-        const points = count * 10 * chainStep;
-        const isCombo = chainStep > 1;
-        const label = isCombo ? `+${points} x${chainStep}` : `+${points}`;
-        spawnScorePopup(sumX / count, sumZ / count, label, isCombo ? 'combo' : '');
-        if (isCombo) {
-          playChainSound(chainStep);
-          showChainCounter(chainStep);
-          // Flash on big chains
-          if (chainStep >= 3) {
-            triggerFlash(0xff66ff, 0.15 + chainStep * 0.05);
-          }
-        }
-      }
-      applyGravity();
     }
   }
 
-  // Post-resolve effects
-  if (anyBombsDetonated) playBombSound();
+  let anyBombsDetonated = false;
+  if (toRemove.size > 0) {
+    for (let iter = 0; iter < 10; iter++) {
+      const bombKeys = [];
+      for (let c = 0; c < GRID_COLS; c++) {
+        for (let r = 0; r < GRID_ROWS; r++) {
+          const cell = grid[c][r];
+          if (!cell || cell.colorIndex !== BOMB_INDEX) continue;
+          if (toRemove.has(`${c},${r}`)) continue;
+          const adj = [[c - 1, r], [c + 1, r], [c, r - 1], [c, r + 1]];
+          const triggered = adj.some(([ac, ar]) => toRemove.has(`${ac},${ar}`));
+          if (triggered) bombKeys.push([c, r]);
+        }
+      }
+      if (bombKeys.length === 0) break;
+      anyBombsDetonated = true;
+      bombKeys.forEach(([bc, br]) => {
+        for (let dc = -1; dc <= 1; dc++) {
+          for (let dr = -1; dr <= 1; dr++) {
+            const nc = bc + dc, nr = br + dr;
+            if (nc >= 0 && nc < GRID_COLS && nr >= 0 && nr < GRID_ROWS && grid[nc][nr]) {
+              toRemove.add(`${nc},${nr}`);
+            }
+          }
+        }
+      });
+    }
+  }
 
-  if (totalRowClears > 0) {
-    showRowClearBanner(totalRowClears);
+  return { toRemove, anyBombsDetonated };
+}
+
+// Gravity, but tweened instead of teleported: grid state (the source of
+// truth for matching) updates immediately, the mesh position eases into
+// place over `speed`-controlled seconds. Reuses the wall-push tween array —
+// same mechanism, just faster — so a mesh mid-fall never fights a mesh
+// mid-wall-push (cancelWallAnimFor already guards exactly that overlap).
+function applyGravityTweened(speed) {
+  for (let c = 0; c < GRID_COLS; c++) {
+    let writeRow = GRID_ROWS - 1;
+    for (let r = GRID_ROWS - 1; r >= 0; r--) {
+      if (grid[c][r]) {
+        if (r !== writeRow) {
+          grid[c][writeRow] = grid[c][r];
+          grid[c][r] = null;
+          pushWallAnim(grid[c][writeRow].mesh, rowToZ(writeRow), speed);
+        }
+        writeRow--;
+      }
+    }
+  }
+}
+
+// ─── Cascade sequencing ───────────────────────────────────────────────────────
+// A chain used to resolve in one synchronous loop: every step's matches,
+// removals, and gravity happened inside a single animation frame, so a x4
+// chain read as one big explosion and the chain counter only ever showed
+// the final step. Now each step is a beat: cubes clear, gravity eases them
+// down over 120ms, then there's a matching pause before the next step is
+// scanned — 180ms cadence in total, so a real chain plays as a sequence of
+// events instead of a single frame of noise.
+const CASCADE_STEP_SECONDS = 0.18;
+const CASCADE_FALL_SPEED = 1 / 0.12; // 120ms fall, expressed the way pushWallAnim wants it
+
+let cascade = null;
+let cascadeTimer = 0;
+
+function beginCascade(onDone) {
+  cascade = {
+    dangerBefore: isInDanger(),
+    totalCleared: 0,
+    chainStep: 0,
+    totalRowClears: 0,
+    anyBombsDetonated: false,
+    onDone,
+  };
+  runCascadeStep();
+}
+
+function runCascadeStep() {
+  const { toRemove, anyBombsDetonated } = computeRemovalSet();
+  if (toRemove.size === 0) {
+    finishCascade();
+    return;
+  }
+
+  cascade.chainStep++;
+  if (anyBombsDetonated) cascade.anyBombsDetonated = true;
+
+  let rowClearsThisStep = 0;
+  for (let r = 0; r < GRID_ROWS; r++) {
+    let allCols = true;
+    for (let c = 0; c < GRID_COLS; c++) {
+      if (!toRemove.has(`${c},${r}`)) { allCols = false; break; }
+    }
+    if (allCols) rowClearsThisStep++;
+  }
+  cascade.totalRowClears += rowClearsThisStep;
+
+  let sumX = 0, sumZ = 0, count = 0;
+  toRemove.forEach((key) => {
+    const [c, r] = key.split(',').map(Number);
+    const cell = grid[c][r];
+    if (cell) {
+      sumX += colToX(c);
+      sumZ += rowToZ(r);
+      count++;
+      spawnParticles(c, r, cell.colorIndex);
+      removeCube(c, r);
+      cascade.totalCleared++;
+    }
+  });
+
+  if (count > 0) {
+    const points = count * 10 * cascade.chainStep;
+    const isCombo = cascade.chainStep > 1;
+    addPoints(points);
+    spawnScorePopup(sumX / count, sumZ / count, isCombo ? `+${points} x${cascade.chainStep}` : `+${points}`, isCombo ? 'combo' : '');
+    if (isCombo) {
+      playChainSound(cascade.chainStep);
+      showChainCounter(cascade.chainStep);
+      if (cascade.chainStep >= 3) triggerFlash(0xff66ff, 0.15 + cascade.chainStep * 0.05);
+    }
+    if (count >= 5 || isCombo) {
+      triggerFreeze(0.08);
+      triggerShake(0.12 + cascade.chainStep * 0.06, 0.2 + cascade.chainStep * 0.05);
+    } else {
+      triggerShake(0.06, 0.12);
+    }
+    if (cascade.totalCleared >= 8) triggerFlash(0xffffff, 0.2);
+  }
+
+  if (rowClearsThisStep > 0) {
+    addPoints(rowClearsThisStep * ROW_CLEAR_BONUS);
+    showRowClearBanner(rowClearsThisStep);
     triggerShake(0.25, 0.35);
     triggerFreeze(0.1);
   }
 
+  lastChainStep = cascade.chainStep;
+  applyGravityTweened(CASCADE_FALL_SPEED);
+
+  cascadeTimer = CASCADE_STEP_SECONDS;
+}
+
+function updateCascade(dt) {
+  if (!cascade) return;
+  cascadeTimer -= dt;
+  if (cascadeTimer <= 0) runCascadeStep();
+}
+
+function finishCascade() {
+  const { totalCleared, chainStep, totalRowClears, anyBombsDetonated, dangerBefore, onDone } = cascade;
+  cascade = null;
+
+  if (anyBombsDetonated) playBombSound();
+
   if (totalCleared > 0) {
-    const bigClear = totalCleared >= 5;
-    const isChain = chainStep > 1;
+    runStats.cleared += totalCleared;
+    lifeStats.cleared = (lifeStats.cleared || 0) + totalCleared;
+    if (chainStep > runStats.bestChain) runStats.bestChain = chainStep;
+    if (chainStep > (lifeStats.bestChain || 0)) lifeStats.bestChain = chainStep;
+    saveLifeStats();
 
-    if (bigClear || isChain) {
-      triggerFreeze(0.08);
-      triggerShake(0.12 + chainStep * 0.06, 0.2 + chainStep * 0.05);
-    } else {
-      triggerShake(0.06, 0.12);
-    }
+    checkLevelUp(totalCleared);
 
-    // Zone charging
-    chargeZone(totalCleared);
-
-    // Dynamic intensity spike
-    lastChainStep = chainStep;
-
-    // Flash on big clears
-    if (totalCleared >= 8) {
-      triggerFlash(0xffffff, 0.2);
-    }
-
-    // Chain badges
-    if (chainStep >= 3) awardBadge('chain-3', 'Chain Reaction');
-    if (chainStep >= 5) awardBadge('chain-5', 'Chain Master');
-
-    // Clutch save: this clear pulled us out of the danger zone
     if (dangerBefore && !isInDanger()) triggerClutch();
   }
 
-  return { totalCleared, chainStep, totalRowClears };
-}
-
-// ─── Score handling ──────────────────────────────────────────────────────────
-function addScore(cleared, chainStep, rowClears) {
-  const points = cleared * 10 * Math.max(1, chainStep);
-  const rowBonus = rowClears * ROW_CLEAR_BONUS;
-  score += points + rowBonus;
-  scoreEl.textContent = score;
-
-  // Stats + badges
-  runStats.cleared += cleared;
-  lifeStats.cleared = (lifeStats.cleared || 0) + cleared;
-  if (chainStep > runStats.bestChain) runStats.bestChain = chainStep;
-  if (chainStep > (lifeStats.bestChain || 0)) lifeStats.bestChain = chainStep;
-  if (lifeStats.cleared >= 1000) awardBadge('cubes-1000', '1,000 Cubes Cleared');
-  saveLifeStats();
-
-  checkLevelUp(cleared);
-}
-
-// ─── Clean-hit "groove" streak ───────────────────────────────────────────────
-// Consecutive shots that clear on impact build a groove — rewards precision
-// over quick-drop spam and gives skilled players a ceiling to chase.
-function registerCleanHit(col) {
-  cleanStreak++;
-  if (cleanStreak >= 2) {
-    const grooveBonus = cleanStreak * 10;
-    score += grooveBonus;
-    scoreEl.textContent = score;
-    spawnScorePopup(colToX(col), rowToZ(3), `GROOVE x${cleanStreak} +${grooveBonus}`, 'row-clear');
-    if (cleanStreak >= 5) awardBadge('groove-5', 'In The Groove');
-  }
+  onDone(totalCleared, chainStep, totalRowClears);
 }
 
 // ─── Shooting ────────────────────────────────────────────────────────────────
@@ -1738,14 +1677,19 @@ let gameOverAt = 0;
 function shoot() {
   if (gameOver || paused) return;
   // Mid-flight input is buffered rather than dropped: at 40 u/s a shot lands
-  // in ~300ms, and swallowing a press in that window feels like a missed tap.
-  if (shootingCube) {
+  // in ~300ms, and swallowing a press in that window feels like a missed
+  // tap. Also buffered while a cascade is still resolving -- firing a
+  // second cube mid-chain would try to start a second cascade on top of
+  // the first one and corrupt both.
+  if (shootingCube || cascade) {
     queuedShot = true;
     return;
   }
 
   const row = landingRow(currentCol);
   if (row < 0) return;
+
+  wallStarted = true;
 
   const mesh = createCubeMesh(currentColorIndex);
   mesh.position.set(colToX(currentCol), 0, spawnCube.position.z);
@@ -1814,28 +1758,20 @@ function updateShooting(dt) {
     shootingCube.mesh.geometry.dispose();
     shootingCube.mesh.material.dispose();
 
-    const landedCol = shootingCube.col;
-    const cell = placeCube(landedCol, shootingCube.targetRow, shootingCube.colorIndex);
+    const cell = placeCube(shootingCube.col, shootingCube.targetRow, shootingCube.colorIndex);
     if (cell) startSquash(cell.mesh);
     playLandSound();
-
-    const { totalCleared, chainStep, totalRowClears } = resolveMatches();
-    if (totalCleared > 0) {
-      addScore(totalCleared, chainStep, totalRowClears);
-      registerCleanHit(landedCol);
-    } else {
-      cleanStreak = 0;
-    }
 
     shootingCube = null;
     shootingVelocity = null;
 
-    checkGameOver();
-
-    if (queuedShot) {
-      queuedShot = false;
-      if (!gameOver) shoot();
-    }
+    beginCascade(() => {
+      checkGameOver();
+      if (queuedShot) {
+        queuedShot = false;
+        if (!gameOver) shoot();
+      }
+    });
   }
 }
 
@@ -1862,9 +1798,9 @@ function advanceWall() {
     grid[c][GRID_ROWS - 1] = null;
   }
 
+  const wallRow = generateWallRow(rng);
   for (let c = 0; c < GRID_COLS; c++) {
-    const ci = randomWallColorIndex();
-    const cell = placeCube(c, GRID_ROWS - 1, ci);
+    const cell = placeCube(c, GRID_ROWS - 1, wallRow[c]);
     if (cell) {
       // New row slides in from behind the back wall with a pop
       cell.mesh.position.z = rowToZ(GRID_ROWS - 1) + DEPTH_CELL;
@@ -1873,12 +1809,9 @@ function advanceWall() {
     }
   }
 
-  const { totalCleared, chainStep, totalRowClears } = resolveMatches();
-  if (totalCleared > 0) {
-    addScore(totalCleared, chainStep, totalRowClears);
-  }
-
-  checkGameOver();
+  beginCascade(() => {
+    checkGameOver();
+  });
 }
 
 // ─── Game Over ───────────────────────────────────────────────────────────────
@@ -1913,7 +1846,6 @@ function triggerGameOver() {
   runStatsEl.textContent =
     `Best chain x${Math.max(1, runStats.bestChain)} • ${runStats.cleared} cubes • Level ${level}`
     + (runStats.clutches ? ` • ${runStats.clutches} clutch` : '');
-  runBadgesEl.textContent = runBadges.length ? '🏅 ' + runBadges.join(' • ') : '';
 
   // Daily challenge result
   if (dailyMode) {
@@ -2002,18 +1934,17 @@ function restartGame(asDaily = false) {
   intensityLevel = 0;
   lastChainStep = 0;
 
-  // Reset zone
-  zoneCharge = 0;
-  zoneActive = false;
-  zoneTimer = 0;
-  zoneClearedInZone = 0;
-  document.body.classList.remove('zone-active');
-  updateZoneBar();
-
-  // Reset chain display
-  chainDisplayTimer = 0;
-  chainDisplayStep = 0;
+  // Reset cascade + announcer state. A stray setTimeout from a finished
+  // cascade will still fire, but announceBusy/queue are already clear so
+  // it's a harmless no-op against the new game.
+  cascade = null;
+  cascadeTimer = 0;
+  announceQueue.length = 0;
+  announceBusy = false;
   chainCounterEl.style.display = 'none';
+  levelUpEl.style.display = 'none';
+  rowClearEl.style.display = 'none';
+  clutchEl.style.display = 'none';
 
   // Reset danger / clutch
   slowMoTimer = 0;
@@ -2029,14 +1960,12 @@ function restartGame(asDaily = false) {
   wallTimerFillEl.style.transform = 'scaleX(1)';
   wallTimerEl.classList.remove('imminent');
 
-  // Reset animations + streak
+  // Reset animations
   landingAnims = [];
   wallAnims = [];
-  cleanStreak = 0;
 
-  // Reset run stats + badges earned this run
-  runStats = { bestChain: 0, cleared: 0, zones: 0, clutches: 0 };
-  runBadges = [];
+  // Reset run stats
+  runStats = { bestChain: 0, cleared: 0, clutches: 0 };
 
   // Reset progression (theme 0 restores environment + palette + music)
   level = 1;
@@ -2062,6 +1991,8 @@ function restartGame(asDaily = false) {
   gameOverScreen.style.display = 'none';
 
   initGrid();
+  seedOpeningRows();
+  wallStarted = false;
 }
 
 // ─── Next-queue + hold previews ──────────────────────────────────────────────
@@ -2138,10 +2069,6 @@ window.addEventListener('keydown', (e) => {
       e.preventDefault();
       shoot();
       break;
-    case 'KeyQ':
-      e.preventDefault();
-      activateZone();
-      break;
     case 'KeyE':
       e.preventDefault();
       holdSwap();
@@ -2184,10 +2111,10 @@ function moveToColumn(newCol) {
   playTickSound();
 }
 
-// Taps on interactive UI (zone bar, hold box, buttons) must not fire a shot
+// Taps on interactive UI (hold box, buttons) must not fire a shot
 function isUiTarget(target) {
   return target && target.closest
-    && target.closest('#zone-bar, #hold-preview, #pause-btn, #daily-btn, button');
+    && target.closest('#hold-preview, #pause-btn, #daily-btn, button');
 }
 
 const aimRaycaster = new THREE.Raycaster();
@@ -2249,9 +2176,6 @@ window.addEventListener('pointercancel', () => { aimPointerId = null; });
 window.addEventListener('touchmove', (e) => e.preventDefault(), { passive: false });
 
 restartBtn.addEventListener('click', () => restartGame(false));
-
-// Tappable Zone bar + Hold box (mobile-critical: Zone was keyboard-only)
-zoneBarContainer.addEventListener('click', () => activateZone());
 holdBoxEl.addEventListener('click', () => holdSwap());
 
 // Daily challenge — same seeded board for everyone, resets each calendar day
@@ -2314,6 +2238,7 @@ function updateSpecialCubeVisuals(dt) {
 
 // ─── Init & Game Loop ────────────────────────────────────────────────────────
 initGrid();
+seedOpeningRows();
 createGroundPlane();
 createGridVisual();
 fitCamera();
@@ -2358,18 +2283,9 @@ function animate() {
     dt = 0;
   }
 
-  // Zone time scaling
   let gameDt = dt;
-  if (zoneActive) {
-    gameDt = dt * ZONE_TIME_SCALE;
-    zoneTimer -= dt;
-    updateZoneBar();
-    if (zoneTimer <= 0) {
-      deactivateZone();
-    }
-  }
 
-  // Clutch slow-mo (stacks with zone scaling)
+  // Clutch slow-mo
   if (slowMoTimer > 0) {
     slowMoTimer -= dt;
     gameDt *= 0.35;
@@ -2394,6 +2310,7 @@ function animate() {
     }
 
     updateShooting(gameDt);
+    updateCascade(gameDt);
     updateParticles(dt); // particles always at full speed
     updateTrailParticles(dt);
     updateLandingAnims(dt);
@@ -2412,28 +2329,30 @@ function animate() {
       }
     }
 
-    // Wall advance (paused during Zone)
-    if (!zoneActive) {
+    // Wall advance -- frozen until the first shot, and while a cascade is
+    // still resolving (advancing on top of an in-progress chain would try
+    // to start a second cascade and corrupt both).
+    if (wallStarted && !cascade) {
       wallAdvanceTimer += gameDt;
-    }
-    const currentInterval = getWallInterval();
-    const timeLeft = currentInterval - wallAdvanceTimer;
+      const currentInterval = getWallInterval();
+      const timeLeft = currentInterval - wallAdvanceTimer;
 
-    // The wall is no longer on a hidden clock: the bar drains for the whole
-    // interval and turns red for the last three seconds.
-    const remaining = Math.max(0, Math.min(1, timeLeft / currentInterval));
-    wallTimerFillEl.style.transform = `scaleX(${remaining})`;
-    wallTimerEl.classList.toggle('imminent', timeLeft <= 3);
+      // The wall is no longer on a hidden clock: the bar drains for the
+      // whole interval and turns red for the last three seconds.
+      const remaining = Math.max(0, Math.min(1, timeLeft / currentInterval));
+      wallTimerFillEl.style.transform = `scaleX(${remaining})`;
+      wallTimerEl.classList.toggle('imminent', timeLeft <= 3);
 
-    if (timeLeft <= 3 && timeLeft > 0) {
-      wallWarningEl.classList.add('active');
-    } else {
-      wallWarningEl.classList.remove('active');
-    }
-    if (wallAdvanceTimer >= currentInterval) {
-      wallAdvanceTimer = 0;
-      wallWarningEl.classList.remove('active');
-      advanceWall();
+      if (timeLeft <= 3 && timeLeft > 0) {
+        wallWarningEl.classList.add('active');
+      } else {
+        wallWarningEl.classList.remove('active');
+      }
+      if (wallAdvanceTimer >= currentInterval) {
+        wallAdvanceTimer = 0;
+        wallWarningEl.classList.remove('active');
+        advanceWall();
+      }
     }
   } else {
     updateParticles(dt);

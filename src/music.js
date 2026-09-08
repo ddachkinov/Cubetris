@@ -65,11 +65,6 @@ export class MusicEngine {
     this.layerTargets.arp = Math.max(0, I - 0.35) * 0.4;
   }
 
-  // Underwater lowpass during Zone
-  setZoneFilter(active) {
-    this.filter.frequency.setTargetAtTime(active ? 420 : 18000, this.ctx.currentTime, 0.25);
-  }
-
   // Call each frame — smooths layer gains toward targets
   update(dt) {
     for (const k in this.layers) {
