@@ -416,7 +416,7 @@ function playChainSound(chainStep) {
 // Progression (must be before randomColorIndex calls)
 let level = 1;
 let totalClearedCount = 0;
-let highScore = parseInt(localStorage.getItem('cubetris-best') || '0', 10);
+let highScore = parseInt(localStorage.getItem('hueshot-best') || '0', 10);
 
 // Swappable RNG — Math.random normally, a date-seeded PRNG for Daily runs
 let rng = Math.random;
@@ -475,7 +475,7 @@ let wallAnims = [];
 // to view them added a system without adding a reason to come back.
 let runStats = { bestChain: 0, cleared: 0, clutches: 0 };
 let lifeStats = JSON.parse(
-  localStorage.getItem('cubetris-stats')
+  localStorage.getItem('hueshot-stats')
   || '{"cleared":0,"bestChain":0,"games":0}'
 );
 
@@ -1226,7 +1226,7 @@ function triggerClutch() {
 
 // ─── Lifetime stats ──────────────────────────────────────────────────────────
 function saveLifeStats() {
-  localStorage.setItem('cubetris-stats', JSON.stringify(lifeStats));
+  localStorage.setItem('hueshot-stats', JSON.stringify(lifeStats));
 }
 
 // ─── Chain counter display ──────────────────────────────────────────────────
@@ -1833,7 +1833,7 @@ function triggerGameOver() {
   const isNewBest = score > highScore;
   if (isNewBest) {
     highScore = score;
-    localStorage.setItem('cubetris-best', String(highScore));
+    localStorage.setItem('hueshot-best', String(highScore));
     bestEl.textContent = highScore;
   }
 
@@ -1849,7 +1849,7 @@ function triggerGameOver() {
 
   // Daily challenge result
   if (dailyMode) {
-    const key = 'cubetris-daily-' + todayKey();
+    const key = 'hueshot-daily-' + todayKey();
     const prev = parseInt(localStorage.getItem(key) || '0', 10);
     if (score > prev) localStorage.setItem(key, String(score));
     dailyResultEl.textContent = `📅 Daily ${todayKey()} — Best: ${Math.max(prev, score)}`;
@@ -1869,7 +1869,7 @@ function triggerGameOver() {
 function restartGame(asDaily = false) {
   // Daily runs use a date-seeded PRNG — everyone gets the same board today
   dailyMode = !!asDaily;
-  rng = dailyMode ? mulberry32(hashString('cubetris-' + todayKey())) : Math.random;
+  rng = dailyMode ? mulberry32(hashString('hueshot-' + todayKey())) : Math.random;
   colorBag = [];
   bagColorCount = 0;
   dailyIndicatorEl.hidden = !dailyMode;
@@ -2187,14 +2187,14 @@ dailyBtn.addEventListener('click', () => {
 // ─── First-run hint ─────────────────────────────────────────────────────────
 // No tutorial screen. If a new player's board sits untouched, one line fades
 // in; the first touch dismisses it for good.
-let hintDismissed = localStorage.getItem('cubetris-hint-seen') === '1';
+let hintDismissed = localStorage.getItem('hueshot-hint-seen') === '1';
 let idleTimer = 0;
 
 function dismissHint() {
   if (hintDismissed) return;
   hintDismissed = true;
   hintEl.classList.remove('show');
-  localStorage.setItem('cubetris-hint-seen', '1');
+  localStorage.setItem('hueshot-hint-seen', '1');
 }
 
 // ─── Resize ──────────────────────────────────────────────────────────────────

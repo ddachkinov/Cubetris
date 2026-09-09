@@ -1,7 +1,7 @@
 {
-  "name": "cubetris",
+  "name": "hueshot",
   "version": "1.0.0",
-  "description": "Cubetris — a 3D match-3 cube shooter built with Three.js",
+  "description": "Hueshot — a 3D match-3 cube shooter built with Three.js",
   "type": "module",
   "scripts": {
     "dev": "vite",

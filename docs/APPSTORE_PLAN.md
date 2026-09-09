@@ -140,7 +140,19 @@ WKWebView risks to spike early: Web Audio behaviour under the silent switch and 
 
 That is all. Nothing about the board, rules or presentation needs to change for IP reasons.
 
-### Five candidate names
+### Resolution (2026-09)
+
+**Chosen: Hueshot.** "Tesserae" was checked first and rejected — an App Store
+search turned up *Tesserae!*, a live minimalist colour-matching puzzle game, plus
+several "Tessera" block puzzles: same category, same mechanic family, so the
+confusion risk it was meant to avoid is present anyway. "Hueshot" came back clear
+on App Store search; the nearby colour games (Hue, I Love Hue, Hue Hunt) are
+perception puzzles, not shooters, so there is no positioning collision either.
+Applied to `package.json`, the page `<title>`, the README, and the `localStorage`
+key prefix. **Still outstanding and required before the bundle ID is registered:
+a USPTO and EUIPO word search in classes 9 and 41.**
+
+### Five candidate names (assessed)
 
 | Name | Why | Risk to check |
 |---|---|---|

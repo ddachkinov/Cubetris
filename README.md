@@ -1,7 +1,8 @@
-# Cubetris
+# Hueshot
 
-> **Working title.** The name is being retired for trademark reasons before release —
-> see Gate 1 in [`docs/APPSTORE_PLAN.md`](docs/APPSTORE_PLAN.md).
+> Renamed from "Cubetris" for trademark reasons — see Gate 1 in
+> [`docs/APPSTORE_PLAN.md`](docs/APPSTORE_PLAN.md). A USPTO/EUIPO clearance
+> search is still outstanding before the bundle ID is registered.
 
 A 3D match-3 cube shooter. You fire coloured cubes down a seven-lane corridor; they
 stack against the far wall and grow back toward you. Groups of three or more touching
@@ -31,8 +32,8 @@ and all visuals are Three.js primitives, so the whole game is the JavaScript bun
 | `docs/APPSTORE_PLAN.md` | Recon, IP audit, design spec and the phased plan to ship on iOS |
 | `docs/DESIGN_AUDIT_2026-02.md` | Earlier design audit, kept for history |
 
-Progress is stored in `localStorage` (`cubetris-best`, `-stats`, `-badges`,
-`-daily-<date>`). Clear those keys to reset.
+Progress is stored in `localStorage` (`hueshot-best`, `-stats`, `-daily-<date>`,
+`-hint-seen`). Clear those keys to reset.
 
 ## Controls
 
