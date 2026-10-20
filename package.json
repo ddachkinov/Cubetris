@@ -9,7 +9,8 @@
     "preview": "vite preview",
     "shots": "node scripts/shoot.mjs",
     "replay": "node scripts/replay.mjs",
-    "test": "vitest run"
+    "test": "vitest run",
+    "checks": "node scripts/checks.mjs"
   },
   "repository": {
     "type": "git",

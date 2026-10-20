@@ -111,23 +111,33 @@ export function randomColorIndex(bag, level, rngFn) {
 }
 
 // A wall row that arrives with a free match already built in isn't a threat,
-// it's a gift the player didn't earn — so no three consecutive columns share
-// a colour. Not bag-dealt: unlike the player's queue, walls should still
-// feel wild column-to-column, just never a freebie.
-export function generateWallRow(rngFn, colorCount) {
+// it's a gift the player didn't earn — so no cube of the new row may complete
+// a group of three, along the row or with the lanes it is pushed against.
+// `grid` is the board after every lane has stepped toward the player, far
+// row still empty; without it the row is only checked against itself. Each
+// lane takes exactly one draw: the drawn colour if it is safe, otherwise the
+// next safe one round the wheel. A cube has at most two neighbours placed
+// before it (the lane behind, the lane to its left), so with three or more
+// colours one is always safe. Not bag-dealt: unlike the player's queue,
+// walls should still feel wild column-to-column, just never a freebie.
+export function generateWallRow(rngFn, colorCount, grid = null) {
+  const far = GRID_ROWS - 1;
+  const board = grid
+    ? grid.map((lane) => lane.slice())
+    : Array.from({ length: GRID_COLS }, () => Array(GRID_ROWS).fill(null));
   const row = [];
   for (let c = 0; c < GRID_COLS; c++) {
-    let color;
-    let tries = 0;
-    do {
-      color = Math.floor(rngFn() * colorCount);
-      tries++;
-    } while (
-      tries < 20
-      && row.length >= 2
-      && row[row.length - 1] === color
-      && row[row.length - 2] === color
-    );
+    const drawn = Math.floor(rngFn() * colorCount);
+    let color = drawn;
+    for (let i = 0; i < colorCount; i++) {
+      const candidate = (drawn + i) % colorCount;
+      board[c][far] = { colorIndex: candidate };
+      if (findMatchGroup(board, c, far).length < 3) {
+        color = candidate;
+        break;
+      }
+    }
+    board[c][far] = { colorIndex: color };
     row.push(color);
   }
   return row;

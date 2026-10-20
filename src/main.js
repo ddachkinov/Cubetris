@@ -423,7 +423,7 @@ function advanceWall() {
     grid[c][GRID_ROWS - 1] = null;
   }
 
-  const wallRow = generateWallRow(state.rng, activeColorCount(state.level));
+  const wallRow = generateWallRow(state.rng, activeColorCount(state.level), grid);
   for (let c = 0; c < GRID_COLS; c++) {
     const cell = placeCube(c, GRID_ROWS - 1, wallRow[c]);
     if (cell) {

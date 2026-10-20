@@ -82,7 +82,7 @@ function advanceWall(grid, rng, colorCount) {
     for (let r = 0; r < FAR; r++) grid[c][r] = grid[c][r + 1];
     grid[c][FAR] = null;
   }
-  const row = generateWallRow(rng, colorCount);
+  const row = generateWallRow(rng, colorCount, grid);
   for (let c = 0; c < GRID_COLS; c++) grid[c][FAR] = { colorIndex: row[c] };
 }
 
@@ -371,12 +371,11 @@ describe('wall advance', () => {
     for (let c = 0; c < GRID_COLS; c++) expect(grid[c][FAR]).not.toBeNull();
   });
 
-  // Bug 1: generateWallRow only rules out three in a row within the new row.
-  // The flood fill also counts the row behind it, so a pair in the new row
-  // over a cube of the same colour (or one cube over a pair in its lane)
-  // arrives as a free clear. Flip this to `it` once the generator looks at
-  // the board it is pushing into.
-  it.fails('never hands the player a match on any settled board', () => {
+  // Bug 1: generateWallRow used to rule out three in a row within the new row
+  // only. The flood fill also counts the row behind it, so a pair in the new
+  // row over a cube of the same colour (or one cube over a pair in its lane)
+  // arrived as a free clear.
+  it('never hands the player a match on any settled board', () => {
     for (const colorCount of [3, 4, 5]) {
       for (let trial = 0; trial < 300; trial++) {
         const rng = mulberry32(colorCount * 1000 + trial);

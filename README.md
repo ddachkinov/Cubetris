@@ -19,6 +19,7 @@ npm run dev      # http://localhost:5173
 npm run build    # -> dist/
 npm run shots    # 8 scene screenshots -> shots/, non-zero exit on any page error
 npm run replay   # replay a recorded 60 s daily run, fail unless it ends identically
+npm run checks   # scripted gameplay checks on a virtual clock, e.g. an idle board stays put
 npm test         # Vitest on src/game/rules.js
 ```
 
@@ -39,10 +40,14 @@ where the two runs diverge. It then replays a second time with a `serialize()` â
 change.
 
 `npm test` covers the pure rules only: flood fill, removal, gravity, the curve table,
-the bag, wall rows, the opening-seed guarantee and daily determinism. One test is
-marked `it.fails` on purpose: a freshly advanced wall can still hand the player a free
-match (bug 1). It passes while the bug is there and fails once it is fixed, as the cue
-to flip it to `it`.
+the bag, wall rows, the opening-seed guarantee and daily determinism, including a
+property test that a freshly advanced wall never hands the player a match.
+
+`npm run checks` (`scripts/checks.mjs`) plays scripted situations through the real
+build on the same virtual clock as the replay (`scripts/vclock.mjs`) and fails unless
+each ends the way the rules say: an idle board, left alone after one shot, must not
+score or level up before the wall reaches the front. Pass part of a check's name to
+run only that one.
 
 No assets, no backend, no account. All audio is synthesized with Web Audio at runtime
 and all visuals are Three.js primitives, so the whole game is the JavaScript bundle.
@@ -66,6 +71,8 @@ and all visuals are Three.js primitives, so the whole game is the JavaScript bun
 | `src/themes.js` | Per-theme environment palette, cube palette and music key |
 | `scripts/shoot.mjs` | Screenshot harness behind `npm run shots` |
 | `scripts/replay.mjs` | Input record/replay harness behind `npm run replay`; the recording is in `scripts/replays/` |
+| `scripts/checks.mjs` | Scripted gameplay checks behind `npm run checks` |
+| `scripts/vclock.mjs` | The virtual clock and page driver `replay.mjs` and `checks.mjs` share |
 | `scripts/bot.mjs` | The greedy bot and seeded `Math.random` both harnesses use |
 | `docs/APPSTORE_PLAN.md` | Recon, IP audit, design spec and the phased plan to ship on iOS |
 | `docs/DESIGN_AUDIT_2026-02.md` | Earlier design audit, kept for history |
