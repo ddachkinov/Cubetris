@@ -247,6 +247,63 @@ const SCENES = [
       await playBot(page, 8, 100);
     },
   },
+  {
+    name: '09-restart-banners',
+    // The announcer shows one banner at a time, each for its full slot.
+    // Restart while a chain banner is up, then play a x2 chain that ends in
+    // a level-up: DOUBLE! and LEVEL 2 must take turns, and neither may be cut
+    // short. A banner timer left over from before the restart used to end
+    // the new game's first slot early.
+    async run(page) {
+      await page.evaluate(() => {
+        const ids = ['chain-counter', 'level-up', 'row-clear', 'clutch-banner'];
+        const since = {};
+        window.__banners = { most: 0, shown: [], restartAt: Infinity };
+        const watch = () => {
+          const now = performance.now();
+          const shown = ids.filter((id) => document.getElementById(id).style.display === 'block');
+          for (const id of ids) {
+            if (shown.includes(id) && since[id] === undefined) since[id] = now;
+            if (!shown.includes(id) && since[id] !== undefined) {
+              if (since[id] > window.__banners.restartAt) window.__banners.shown.push({ id, ms: now - since[id] });
+              delete since[id];
+            }
+          }
+          window.__banners.most = Math.max(window.__banners.most, shown.length);
+          requestAnimationFrame(watch);
+        };
+        watch();
+      });
+      const doubleShown = () => page.waitForFunction(() => {
+        const el = document.getElementById('chain-counter');
+        return el.style.display === 'block' && el.textContent === 'DOUBLE!';
+      }, null, { timeout: 5_000 });
+
+      await stage(page, CHAIN_BOARD);
+      await page.evaluate(() => window.__hs.setCur({ col: 4, color: 0 }));
+      await page.keyboard.press('Space');
+      await doubleShown();
+      await page.evaluate(() => { window.__banners.restartAt = performance.now(); });
+      await page.click('#daily-btn');
+      check(await page.evaluate(() => window.__hs.level === 1 && window.__hs.score === 0), 'restart did not reset the run');
+
+      // Six clears: x2 chain, then level 2
+      await stage(page, CHAIN_BOARD);
+      await page.evaluate(() => window.__hs.setCur({ col: 4, color: 0 }));
+      await page.keyboard.press('Space');
+      await doubleShown();
+      await page.waitForFunction(
+        () => document.getElementById('level-up').style.display === 'block',
+        null, { timeout: 5_000 },
+      );
+      await page.waitForTimeout(1_600);
+      const { most, shown } = await page.evaluate(() => window.__banners);
+      const list = shown.map((b) => `${b.id} ${Math.round(b.ms)} ms`).join(', ');
+      check(most === 1, `${most} banners on screen at once (${list})`);
+      check(shown.length === 2 && shown.every((b) => b.ms > 1_000), `a banner was cut short after the restart: ${list}`);
+      return list;
+    },
+  },
 ];
 
 // ─── Runner ──────────────────────────────────────────────────────────────────

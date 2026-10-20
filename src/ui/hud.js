@@ -74,6 +74,7 @@ export function spawnScorePopup(worldX, worldZ, label, extraClass) {
 // the line since it is the rarest and the one the player most needs to see.
 const announceQueue = [];
 let announceBusy = false;
+let announceTimer = null;
 
 function announce(showFn, durationMs, priority = false) {
   if (priority) announceQueue.unshift({ showFn, durationMs });
@@ -86,22 +87,33 @@ function pumpAnnouncer() {
   const job = announceQueue.shift();
   announceBusy = true;
   job.showFn();
-  setTimeout(() => {
+  announceTimer = setTimeout(() => {
+    announceTimer = null;
     announceBusy = false;
+    // The banner's own animationend hides it a frame or few after its slot
+    // ends; by then it has faded out, so hide it now rather than share the
+    // screen with the next one.
+    hideBanners();
     pumpAnnouncer();
   }, job.durationMs);
 }
 
-// Restart: drop queued banners and hide any on screen. A stray setTimeout
-// from a finished cascade will still fire, but announceBusy/queue are
-// already clear so it's a harmless no-op against the new game.
-export function resetAnnouncer() {
-  announceQueue.length = 0;
-  announceBusy = false;
+function hideBanners() {
   chainCounterEl.style.display = 'none';
   levelUpEl.style.display = 'none';
   rowClearEl.style.display = 'none';
   clutchEl.style.display = 'none';
+}
+
+// Restart: drop queued banners, hide any on screen, and cancel the banner
+// timer. Left running, it would free the slot in the middle of the next
+// game's first banner and put a second one on screen beside it.
+export function resetAnnouncer() {
+  announceQueue.length = 0;
+  announceBusy = false;
+  clearTimeout(announceTimer);
+  announceTimer = null;
+  hideBanners();
 }
 
 // ─── Chain counter display ──────────────────────────────────────────────────

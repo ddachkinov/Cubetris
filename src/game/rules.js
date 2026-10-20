@@ -17,6 +17,8 @@ export const WALL_ADVANCE_DECAY = 0.9;
 // costs the full ten.
 export const CLEARS_FOR_LEVEL_1 = 6;
 export const CLEARS_PER_LEVEL = 10;
+// Seconds of calm a level-up adds before the next wall advance
+export const LEVEL_UP_BREATHER = 3;
 export const ROW_CLEAR_BONUS = 200;
 
 // Five plain colours (0-4), then the special cubes
@@ -85,6 +87,21 @@ export function dailySeed(dateKey) {
   return hashString('hueshot-' + dateKey);
 }
 
+// A daily run draws from two streams: one deals the player's queue, the
+// other builds the board (the opening seeds, then the wall rows). With one
+// stream for both, each wall row took its draws from wherever the queue had
+// got to, so shooting a little sooner or later than someone else gave a
+// different queue and different walls from then on. Kept apart, the n-th
+// cube dealt and the n-th wall row's draws are the same for everyone that
+// day, whenever they shoot. (A wall lane can still differ where the drawn
+// colour would hand that player's board a match; see generateWallRow.)
+export function dailyRngs(dateKey) {
+  return {
+    queueRng: mulberry32(dailySeed(dateKey)),
+    wallRng: mulberry32(hashString('hueshot-wall-' + dateKey)),
+  };
+}
+
 // ─── Bag-based colour dealing ────────────────────────────────────────────────
 // 2 of each active colour per bag, shuffled. Kills droughts/floods so the
 // game feels fair. `bag` is { colors, count } and is the only thing changed.
@@ -111,23 +128,33 @@ export function randomColorIndex(bag, level, rngFn) {
 }
 
 // A wall row that arrives with a free match already built in isn't a threat,
-// it's a gift the player didn't earn — so no three consecutive columns share
-// a colour. Not bag-dealt: unlike the player's queue, walls should still
-// feel wild column-to-column, just never a freebie.
-export function generateWallRow(rngFn, colorCount) {
+// it's a gift the player didn't earn — so no cube of the new row may complete
+// a group of three, along the row or with the lanes it is pushed against.
+// `grid` is the board after every lane has stepped toward the player, far
+// row still empty; without it the row is only checked against itself. Each
+// lane takes exactly one draw: the drawn colour if it is safe, otherwise the
+// next safe one round the wheel. A cube has at most two neighbours placed
+// before it (the lane behind, the lane to its left), so with three or more
+// colours one is always safe. Not bag-dealt: unlike the player's queue,
+// walls should still feel wild column-to-column, just never a freebie.
+export function generateWallRow(rngFn, colorCount, grid = null) {
+  const far = GRID_ROWS - 1;
+  const board = grid
+    ? grid.map((lane) => lane.slice())
+    : Array.from({ length: GRID_COLS }, () => Array(GRID_ROWS).fill(null));
   const row = [];
   for (let c = 0; c < GRID_COLS; c++) {
-    let color;
-    let tries = 0;
-    do {
-      color = Math.floor(rngFn() * colorCount);
-      tries++;
-    } while (
-      tries < 20
-      && row.length >= 2
-      && row[row.length - 1] === color
-      && row[row.length - 2] === color
-    );
+    const drawn = Math.floor(rngFn() * colorCount);
+    let color = drawn;
+    for (let i = 0; i < colorCount; i++) {
+      const candidate = (drawn + i) % colorCount;
+      board[c][far] = { colorIndex: candidate };
+      if (findMatchGroup(board, c, far).length < 3) {
+        color = candidate;
+        break;
+      }
+    }
+    board[c][far] = { colorIndex: color };
     row.push(color);
   }
   return row;
