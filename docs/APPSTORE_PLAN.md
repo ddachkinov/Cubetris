@@ -407,7 +407,7 @@ Ordered by impact ÷ effort. Effort assumes an experienced dev new to this codeb
 ### Phase 6 — The Daily (10 h)
 - Daily mode is the default screen state ("Today's board" + "Endless"). Unlimited retries; best of day.
 - Game Center: recurring daily leaderboard (App Store Connect supports daily-reset recurring leaderboards) via a thin plugin; all-time board secondary. Queue submissions offline.
-- Share sheet: `Tesserae · Sep 6 · 4,820 · ×5 chain · Top 8%` plus a 7×3 emoji sketch of the final board.
+- Share sheet: `Hueshot · Sep 6 · 4,820 · ×5 chain · Top 8%` plus a 7×3 emoji sketch of the final board.
 - Recap screen shows rank when online, local best when not.
 - **Exit:** two devices see each other on today's board; share text arrives in Messages; airplane mode plays fine.
 

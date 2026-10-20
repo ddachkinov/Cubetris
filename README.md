@@ -13,6 +13,7 @@ shoves the whole board one step closer. When a cube reaches your row, the run is
 ## Run it
 
 ```sh
+nvm use          # Node 22, from .nvmrc
 npm install
 npm run dev      # http://localhost:5173
 npm run build    # -> dist/
