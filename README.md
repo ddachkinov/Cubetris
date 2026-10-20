@@ -19,6 +19,7 @@ npm run dev      # http://localhost:5173
 npm run build    # -> dist/
 npm run shots    # 8 scene screenshots -> shots/, non-zero exit on any page error
 npm run replay   # replay a recorded 60 s daily run, fail unless it ends identically
+npm test         # Vitest on src/game/rules.js
 ```
 
 `npm run shots` (`scripts/shoot.mjs`) boots Vite, drives the game in headless Chromium
@@ -37,6 +38,12 @@ where the two runs diverge. It then replays a second time with a `serialize()` â
 `npm run replay -- --record` re-records the script, for when the gameplay is *meant* to
 change.
 
+`npm test` covers the pure rules only: flood fill, removal, gravity, the curve table,
+the bag, wall rows, the opening-seed guarantee and daily determinism. One test is
+marked `it.fails` on purpose: a freshly advanced wall can still hand the player a free
+match (bug 1). It passes while the bug is there and fails once it is fixed, as the cue
+to flip it to `it`.
+
 No assets, no backend, no account. All audio is synthesized with Web Audio at runtime
 and all visuals are Three.js primitives, so the whole game is the JavaScript bundle.
 
@@ -47,6 +54,7 @@ and all visuals are Three.js primitives, so the whole game is the JavaScript bun
 | `index.html` | Page shell, HUD markup, all CSS |
 | `src/main.js` | Game flow (shooting, cascades, the wall, levels, game over, restart) and the frame loop |
 | `src/game/rules.js` | Pure rules: landing, flood-fill matching, removal sets, gravity, wall rows, opening seeds, the bag, the seeded RNG and the difficulty curves |
+| `src/game/rules.test.js` | Vitest suite for `rules.js` (`npm test`) |
 | `src/game/state.js` | The one `state` object a run is made of, and `serialize`/`deserialize` for saving one between shots |
 | `src/render/` | Three.js: `scene.js` (renderer, lights, static board), `camera.js` (fit to any aspect, shake), `cubes.js` (cube meshes, aim visuals, cube tweens), `particles.js` (debris, shot trail), `palette.js` (the theme's cube colours) |
 | `src/audio/sfx.js` | The `AudioContext` and every synthesized sound effect |
