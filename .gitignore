@@ -11,3 +11,6 @@ Thumbs.db
 
 # Logs
 *.log
+
+# Screenshot harness output (npm run shots)
+shots/

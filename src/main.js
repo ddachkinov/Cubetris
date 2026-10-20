@@ -2390,3 +2390,51 @@ function animate() {
 }
 
 animate();
+
+// ─── Debug hook (?debug=1 only) ──────────────────────────────────────────────
+// Read/stage access for scripts/shoot.mjs and anyone poking at the console.
+// Not exposed without the query flag, so a player can't reach it by accident.
+if (new URLSearchParams(location.search).get('debug') === '1') {
+  window.__hs = {
+    // grid[col][row] as colour indices (null = empty); row 0 is the player's row
+    get grid() {
+      return grid.map((col) => col.map((cell) => (cell ? cell.colorIndex : null)));
+    },
+    get level() { return level; },
+    get score() { return score; },
+    get cur() {
+      return { col: currentCol, color: currentColorIndex, next: [...nextQueue], held: heldColorIndex };
+    },
+    // A shot in flight or a cascade still resolving; input pressed now is buffered
+    get busy() { return !!(shootingCube || cascade); },
+    get gameOver() { return gameOver; },
+    get danger() { return dangerActive; },
+    landingRow,
+    // Stage a cube without resolving matches; returns false if the cell is taken
+    placeCube(col, row, colorIndex) {
+      if (grid[col]?.[row] !== null) return false;
+      return !!placeCube(col, row, colorIndex);
+    },
+    clearBoard() {
+      for (let c = 0; c < GRID_COLS; c++) {
+        for (let r = 0; r < GRID_ROWS; r++) removeCube(c, r);
+      }
+    },
+    // Set the cube in hand and/or the aimed lane: setCur({ color, col })
+    setCur({ color, col } = {}) {
+      if (color !== undefined) currentColorIndex = color;
+      if (col !== undefined) currentCol = Math.max(0, Math.min(GRID_COLS - 1, col));
+      updateSpawnCube();
+      updateColumnHighlight();
+      updateGhost();
+    },
+    // Jump progression to n cumulative clears, silently (no banner, no breather)
+    setLevelClears(n) {
+      totalClearedCount = n;
+      level = levelForClears(n);
+      levelEl.textContent = `Level ${level}`;
+      const themeIdx = Math.floor((level - 1) / 3) % THEMES.length;
+      if (themeIdx !== currentThemeIndex) applyTheme(themeIdx);
+    },
+  };
+}
