@@ -17,7 +17,9 @@
 //
 // A recording made on one build and replayed on another must end on the
 // same score, level, grid and hand; a checkpoint every 5 s narrows down
-// where two runs first diverge.
+// where two runs first diverge. The replay then runs a second time with a
+// save and load (serialize() -> restore()) halfway through, which must not
+// change a thing either.
 
 import { readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
@@ -304,16 +306,34 @@ async function record(browser, baseUrl, errors) {
 }
 
 // ─── Replay ──────────────────────────────────────────────────────────────────
-async function replay(browser, baseUrl, errors, fixture) {
+// With roundtripAt, the run is also saved and loaded back mid-game: at the
+// first frame from roundtripAt on with nothing in flight, the board is torn
+// down and rebuilt from JSON.parse(JSON.stringify(serialize())). The rest of
+// the run must play out exactly as if that never happened.
+async function replay(browser, baseUrl, errors, fixture, { roundtripAt = null } = {}) {
   const { context, page } = await openGame(browser, baseUrl, errors, fixture);
   try {
     const checkpoints = [];
-    for (let frame = 0; frame < fixture.frames; frame += CHECK_EVERY) {
-      const n = Math.min(CHECK_EVERY, fixture.frames - frame);
+    let roundtrip = null;
+    let frame = 0;
+    while (frame < fixture.frames) {
+      let n = Math.min(CHECK_EVERY - (frame % CHECK_EVERY), fixture.frames - frame);
+      if (roundtripAt !== null && !roundtrip && frame >= roundtripAt) {
+        roundtrip = await page.evaluate(() => {
+          if (window.__hs.busy) return null;
+          const saved = JSON.stringify(window.__hs.serialize());
+          window.__hs.restore(JSON.parse(saved));
+          return { frame: window.__replay.frame, same: JSON.stringify(window.__hs.serialize()) === saved };
+        });
+        if (!roundtrip) n = 1; // busy: try again next frame
+      } else if (roundtripAt !== null && !roundtrip) {
+        n = Math.min(n, roundtripAt - frame);
+      }
       const evs = fixture.events.filter((e) => e.f >= frame && e.f < frame + n);
       checkpoints.push(...await run(page, n, evs));
+      frame += n;
     }
-    return { checkpoints, final: await snap(page) };
+    return { checkpoints, final: await snap(page), roundtrip };
   } finally {
     await context.close();
   }
@@ -388,7 +408,19 @@ async function main() {
       ok = compare('replay of the new recording', fixture, await replay(browser, baseUrl, errors, fixture));
     } else {
       const fixture = JSON.parse(await readFile(FIXTURE, 'utf8'));
-      ok = compare(`replay ${path.relative(ROOT, FIXTURE)}`, fixture, await replay(browser, baseUrl, errors, fixture));
+      const name = path.relative(ROOT, FIXTURE);
+      ok = compare(`replay ${name}`, fixture, await replay(browser, baseUrl, errors, fixture));
+
+      const rt = await replay(browser, baseUrl, errors, fixture, { roundtripAt: fixture.frames / 2 });
+      if (!rt.roundtrip) {
+        console.log(`FAIL save/load: never found a frame with nothing in flight after ${fixture.frames / 2}`);
+        ok = false;
+      } else if (!rt.roundtrip.same) {
+        console.log(`FAIL save/load: serialize() after restore() differs from the save, frame ${rt.roundtrip.frame}`);
+        ok = false;
+      } else {
+        ok = compare(`replay with a save/load at frame ${rt.roundtrip.frame}`, fixture, rt) && ok;
+      }
       console.log(`     ${((Date.now() - t0) / 1000).toFixed(1)}s`);
     }
   } finally {

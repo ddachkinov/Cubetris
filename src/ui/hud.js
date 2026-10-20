@@ -1,0 +1,317 @@
+// ─── HUD ─────────────────────────────────────────────────────────────────────
+// Everything in the DOM overlay: score line, next/hold previews, the wall
+// timer, banners, popups, the screen flash, the danger vignette, the
+// first-run hint and the pause and game-over screens.
+
+import * as THREE from 'three';
+import { RAINBOW_INDEX, BOMB_INDEX, ROW_CLEAR_BONUS } from '../game/rules.js';
+import { state } from '../game/state.js';
+import { hintSeen, markHintSeen } from '../persistence.js';
+import { COLOR_NAMES } from '../render/palette.js';
+import { camera } from '../render/camera.js';
+
+// ─── DOM refs ────────────────────────────────────────────────────────────────
+const scoreEl = document.getElementById('score-val');
+const bestEl = document.getElementById('best-val');
+const levelEl = document.getElementById('level-val');
+const finalScoreEl = document.getElementById('final-score');
+const finalBestEl = document.getElementById('final-best');
+const newBestEl = document.getElementById('new-best');
+const gameOverScreen = document.getElementById('game-over-screen');
+const qSlot0 = document.getElementById('q-slot-0');
+const qSlot1 = document.getElementById('q-slot-1');
+const qSlot2 = document.getElementById('q-slot-2');
+const holdBoxEl = document.getElementById('hold-preview');
+const clutchEl = document.getElementById('clutch-banner');
+const runStatsEl = document.getElementById('run-stats');
+const dailyResultEl = document.getElementById('daily-result');
+const dailyIndicatorEl = document.getElementById('daily-indicator');
+const wallWarningEl = document.getElementById('wall-warning');
+const levelUpEl = document.getElementById('level-up');
+const rowClearEl = document.getElementById('row-clear');
+const uiEl = document.getElementById('ui');
+const wallTimerEl = document.getElementById('wall-timer');
+const wallTimerFillEl = document.getElementById('wall-timer-fill');
+const hintEl = document.getElementById('hint');
+const pauseScreen = document.getElementById('pause-screen');
+const chainCounterEl = document.getElementById('chain-counter');
+const flashOverlayEl = document.getElementById('flash-overlay');
+
+// ─── Score line ──────────────────────────────────────────────────────────────
+export function setScore(score) {
+  scoreEl.textContent = score;
+}
+
+export function setBest(best) {
+  bestEl.textContent = best;
+}
+
+export function setLevel(level) {
+  levelEl.textContent = `Level ${level}`;
+}
+
+// ─── Score popups ─────────────────────────────────────────────────────────────
+export function spawnScorePopup(worldX, worldZ, label, extraClass) {
+  const pos = new THREE.Vector3(worldX, 1, worldZ);
+  pos.project(camera);
+  const sx = (pos.x * 0.5 + 0.5) * window.innerWidth;
+  const sy = (-pos.y * 0.5 + 0.5) * window.innerHeight;
+
+  const el = document.createElement('div');
+  el.className = 'score-popup' + (extraClass ? ' ' + extraClass : '');
+  el.textContent = label;
+  el.style.left = `${sx}px`;
+  el.style.top = `${sy}px`;
+  uiEl.appendChild(el);
+  el.addEventListener('animationend', () => el.remove());
+}
+
+// ─── Announcer queue ─────────────────────────────────────────────────────────
+// Level-up, row-clear, and chain banners used to be five independently
+// timed DOM elements at slightly different screen heights; a fast cascade
+// left two or three visible at once. Now there is one slot: each banner is
+// a queued job with a fixed duration, shown one at a time. Level-up jumps
+// the line since it is the rarest and the one the player most needs to see.
+const announceQueue = [];
+let announceBusy = false;
+
+function announce(showFn, durationMs, priority = false) {
+  if (priority) announceQueue.unshift({ showFn, durationMs });
+  else announceQueue.push({ showFn, durationMs });
+  pumpAnnouncer();
+}
+
+function pumpAnnouncer() {
+  if (announceBusy || announceQueue.length === 0) return;
+  const job = announceQueue.shift();
+  announceBusy = true;
+  job.showFn();
+  setTimeout(() => {
+    announceBusy = false;
+    pumpAnnouncer();
+  }, job.durationMs);
+}
+
+// Restart: drop queued banners and hide any on screen. A stray setTimeout
+// from a finished cascade will still fire, but announceBusy/queue are
+// already clear so it's a harmless no-op against the new game.
+export function resetAnnouncer() {
+  announceQueue.length = 0;
+  announceBusy = false;
+  chainCounterEl.style.display = 'none';
+  levelUpEl.style.display = 'none';
+  rowClearEl.style.display = 'none';
+  clutchEl.style.display = 'none';
+}
+
+// ─── Chain counter display ──────────────────────────────────────────────────
+export function showChainCounter(step) {
+  if (step < 2) return;
+  announce(() => {
+    const labels = ['', '', 'DOUBLE', 'TRIPLE', 'QUAD', 'PENTA', 'HEXA', 'MEGA', 'ULTRA', 'INSANE'];
+    const label = step < labels.length ? labels[step] : `${step}x CHAIN`;
+
+    chainCounterEl.textContent = `${label}!`;
+    chainCounterEl.style.display = 'block';
+    chainCounterEl.style.animation = 'none';
+    void chainCounterEl.offsetWidth;
+
+    // Color escalation based on chain step
+    const colors = ['', '', '#ff6ef5', '#ff4444', '#ffcc00', '#44ff88', '#4488ff', '#ffffff'];
+    const color = step < colors.length ? colors[step] : '#ffffff';
+    chainCounterEl.style.color = color;
+    chainCounterEl.style.textShadow = `0 0 20px ${color}, 0 0 40px ${color}`;
+    chainCounterEl.style.fontSize = Math.min(72, 40 + step * 8) + 'px';
+
+    chainCounterEl.style.animation = 'chain-pop 1.2s ease-out forwards';
+    chainCounterEl.addEventListener('animationend', () => {
+      chainCounterEl.style.display = 'none';
+    }, { once: true });
+  }, 1200);
+}
+
+// Level-up jumps the announcer queue. themeName is set when the level also
+// brought a new theme.
+export function showLevelUpBanner(level, themeName) {
+  announce(() => {
+    levelUpEl.innerHTML = `LEVEL ${level}`
+      + (themeName
+        ? `<div style="font-size:20px;letter-spacing:6px;margin-top:6px;">${themeName}</div>`
+        : '')
+      + '<div style="font-size:13px;opacity:0.65;margin-top:4px;">WALL STABILIZED</div>';
+    levelUpEl.style.display = 'block';
+    levelUpEl.style.animation = 'none';
+    void levelUpEl.offsetWidth;
+    levelUpEl.style.animation = 'lvlup 1.4s ease-out forwards';
+    levelUpEl.addEventListener('animationend', () => {
+      levelUpEl.style.display = 'none';
+    }, { once: true });
+  }, 1400, true);
+}
+
+// ─── Row clear banner ────────────────────────────────────────────────────────
+export function showRowClearBanner(count) {
+  announce(() => {
+    rowClearEl.textContent = count > 1
+      ? `${count}x ROW CLEAR! +${count * ROW_CLEAR_BONUS}`
+      : `ROW CLEAR! +${ROW_CLEAR_BONUS}`;
+    rowClearEl.style.display = 'block';
+    rowClearEl.style.animation = 'none';
+    void rowClearEl.offsetWidth;
+    rowClearEl.style.animation = 'rowclear 1s ease-out forwards';
+    rowClearEl.addEventListener('animationend', () => {
+      rowClearEl.style.display = 'none';
+    }, { once: true });
+  }, 1000);
+}
+
+export function showClutchBanner(bonus) {
+  announce(() => {
+    clutchEl.textContent = `CLUTCH! +${bonus}`;
+    clutchEl.style.display = 'block';
+    clutchEl.style.animation = 'none';
+    void clutchEl.offsetWidth;
+    clutchEl.style.animation = 'rowclear 1.1s ease-out forwards';
+    clutchEl.addEventListener('animationend', () => {
+      clutchEl.style.display = 'none';
+    }, { once: true });
+  }, 1100, true);
+}
+
+// ─── Flash overlay (screen flash on big clears) ─────────────────────────────
+let flashTimer = 0;
+
+export function triggerFlash(color, intensity) {
+  flashOverlayEl.style.background = '#' + color.toString(16).padStart(6, '0');
+  flashOverlayEl.style.opacity = intensity;
+  flashTimer = 0.15;
+}
+
+// Once per frame: the flash overlay decays
+export function updateFlash(dt) {
+  if (flashTimer > 0) {
+    flashTimer -= dt;
+    if (flashTimer <= 0) {
+      flashOverlayEl.style.opacity = 0;
+    } else {
+      flashOverlayEl.style.opacity = parseFloat(flashOverlayEl.style.opacity) * 0.85;
+    }
+  }
+}
+
+export function isFlashing() {
+  return flashTimer > 0;
+}
+
+export function resetFlash() {
+  flashTimer = 0;
+  flashOverlayEl.style.opacity = 0;
+}
+
+// ─── Next-queue + hold previews ──────────────────────────────────────────────
+function colorCssFor(idx) {
+  if (idx === RAINBOW_INDEX) {
+    return `linear-gradient(135deg, ${COLOR_NAMES.join(', ')})`;
+  }
+  if (idx === BOMB_INDEX) return '#ff6600';
+  return COLOR_NAMES[idx];
+}
+
+function paintSlot(el, idx) {
+  el.style.background = (idx === null || idx === undefined) ? 'transparent' : colorCssFor(idx);
+}
+
+export function updateNextPreview() {
+  paintSlot(qSlot0, state.nextQueue[0]);
+  paintSlot(qSlot1, state.nextQueue[1]);
+  paintSlot(qSlot2, state.nextQueue[2]);
+}
+
+export function updateHoldPreview() {
+  paintSlot(holdBoxEl, state.heldColorIndex);
+}
+
+// ─── Wall timer ──────────────────────────────────────────────────────────────
+// The wall is no longer on a hidden clock: the bar drains for the whole
+// interval and turns red for the last three seconds.
+export function showWallTimer(timeLeft, interval) {
+  const remaining = Math.max(0, Math.min(1, timeLeft / interval));
+  wallTimerFillEl.style.transform = `scaleX(${remaining})`;
+  wallTimerEl.classList.toggle('imminent', timeLeft <= 3);
+
+  if (timeLeft <= 3 && timeLeft > 0) {
+    wallWarningEl.classList.add('active');
+  } else {
+    wallWarningEl.classList.remove('active');
+  }
+}
+
+export function hideWallWarning() {
+  wallWarningEl.classList.remove('active');
+}
+
+export function resetWallTimer() {
+  wallTimerFillEl.style.transform = 'scaleX(1)';
+  wallTimerEl.classList.remove('imminent');
+}
+
+// ─── Danger vignette ─────────────────────────────────────────────────────────
+export function setDanger(on) {
+  document.body.classList.toggle('danger', on);
+}
+
+export function setDailyIndicator(on) {
+  dailyIndicatorEl.hidden = !on;
+}
+
+// ─── Screens ─────────────────────────────────────────────────────────────────
+// daily: the daily line to show, or null outside a daily run
+export function showGameOver({ score, best, isNewBest, recap, daily }) {
+  finalScoreEl.textContent = score;
+  finalBestEl.textContent = best;
+  newBestEl.style.display = isNewBest ? 'block' : 'none';
+  runStatsEl.textContent = recap;
+  if (daily) {
+    dailyResultEl.textContent = daily;
+    dailyResultEl.style.display = 'block';
+  } else {
+    dailyResultEl.style.display = 'none';
+  }
+  gameOverScreen.style.display = 'flex';
+}
+
+export function showPause(on) {
+  pauseScreen.style.display = on ? 'flex' : 'none';
+}
+
+// Restart: back to a bare board
+export function hideOverlays() {
+  wallWarningEl.classList.remove('active');
+  pauseScreen.style.display = 'none';
+  gameOverScreen.style.display = 'none';
+}
+
+// ─── First-run hint ─────────────────────────────────────────────────────────
+// No tutorial screen. If a new player's board sits untouched, one line fades
+// in; the first touch dismisses it for good.
+let hintDismissed = hintSeen();
+let idleTimer = 0;
+
+export function dismissHint() {
+  if (hintDismissed) return;
+  hintDismissed = true;
+  hintEl.classList.remove('show');
+  markHintSeen();
+}
+
+// Once per frame while a run is live
+export function updateHint(dt) {
+  if (!hintDismissed) {
+    idleTimer += dt;
+    hintEl.classList.toggle('show', idleTimer > 2.5);
+  }
+}
+
+export function resetIdle() {
+  idleTimer = 0;
+}
