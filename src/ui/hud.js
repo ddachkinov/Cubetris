@@ -36,6 +36,7 @@ const hintEl = document.getElementById('hint');
 const pauseScreen = document.getElementById('pause-screen');
 const chainCounterEl = document.getElementById('chain-counter');
 const flashOverlayEl = document.getElementById('flash-overlay');
+const announcerEl = document.getElementById('announcer');
 
 // ─── Score line ──────────────────────────────────────────────────────────────
 export function setScore(score) {
@@ -51,11 +52,26 @@ export function setLevel(level) {
 }
 
 // ─── Score popups ─────────────────────────────────────────────────────────────
+// A popup floats this far up over its life (see score-float in index.html)
+const POPUP_RISE_PX = 60;
+// Line height of the largest popup (a combo, 30px font, scaled 1.2 on entry)
+const POPUP_HEIGHT_PX = 40;
+const POPUP_GAP_PX = 6;
+
+// A popup starts over the cubes it scored for, but never inside the
+// announcer's band: a clear at the far wall used to put "+60 x2" right on
+// top of DOUBLE!. Banners can arrive after the popup (a level-up lands at
+// the end of the cascade), so the band is kept clear whether or not one is
+// showing.
 export function spawnScorePopup(worldX, worldZ, label, extraClass) {
   const pos = new THREE.Vector3(worldX, 1, worldZ);
   pos.project(camera);
   const sx = (pos.x * 0.5 + 0.5) * window.innerWidth;
-  const sy = (-pos.y * 0.5 + 0.5) * window.innerHeight;
+  let sy = (-pos.y * 0.5 + 0.5) * window.innerHeight;
+  const band = announcerEl.getBoundingClientRect();
+  if (sy - POPUP_RISE_PX < band.bottom && sy + POPUP_HEIGHT_PX > band.top) {
+    sy = band.bottom + POPUP_RISE_PX + POPUP_GAP_PX;
+  }
 
   const el = document.createElement('div');
   el.className = 'score-popup' + (extraClass ? ' ' + extraClass : '');
@@ -282,7 +298,13 @@ export function showGameOver({ score, best, isNewBest, recap, daily }) {
   finalScoreEl.textContent = score;
   finalBestEl.textContent = best;
   newBestEl.style.display = isNewBest ? 'block' : 'none';
-  runStatsEl.textContent = recap;
+  // Wrap between the recap's items, never inside one
+  runStatsEl.replaceChildren(...recap.split(' • ').flatMap((item, i) => {
+    const span = document.createElement('span');
+    span.className = 'recap-item';
+    span.textContent = item;
+    return i ? [' • ', span] : [span];
+  }));
   if (daily) {
     dailyResultEl.textContent = daily;
     dailyResultEl.style.display = 'block';

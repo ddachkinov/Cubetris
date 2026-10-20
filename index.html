@@ -11,6 +11,16 @@
       * { margin: 0; padding: 0; box-sizing: border-box; }
       body { overflow: hidden; background: #111; font-family: 'Segoe UI', sans-serif; }
       canvas { display: block; }
+      /* The announcer slot: every banner is centred on this line, and score
+         popups keep out of the band around it (see spawnScorePopup) */
+      :root { --announce-y: calc(env(safe-area-inset-top) + 150px); }
+      #announcer {
+        position: absolute;
+        left: 0; right: 0;
+        top: calc(var(--announce-y) - 56px);
+        height: 112px;
+        pointer-events: none;
+      }
       #ui {
         position: absolute;
         top: 0;
@@ -34,8 +44,10 @@
         color: #fff;
       }
       .bar-slot { display: flex; flex-direction: column; align-items: center; gap: 6px; }
-      .bar-slot.left { align-items: flex-start; }
+      .bar-slot.left { flex-direction: row; align-items: flex-start; gap: 8px; }
+      .bar-slot.center { flex: 1; min-width: 0; white-space: nowrap; }
       .bar-slot.right { align-items: flex-end; }
+      .hold-col { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; }
       .bar-caption {
         font-size: 10px;
         letter-spacing: 1.5px;
@@ -69,20 +81,23 @@
       .q-slot.small { width: 30px; height: 30px; opacity: 0.75; }
       .q-slot.tiny { width: 22px; height: 22px; opacity: 0.5; }
 
-      /* Pause + daily: small glyphs, out of the way of the thumb */
+      /* Pause + daily: two small glyphs stacked beside the hold, in the top
+         row and above the wall timer, out of the way of the thumb */
+      #glyph-col { display: flex; flex-direction: column; gap: 4px; }
       .glyph-btn {
-        width: 34px; height: 34px;
+        width: 30px; height: 30px;
         border: 1px solid rgba(255,255,255,0.25);
-        border-radius: 9px;
+        border-radius: 8px;
         background: rgba(0,0,0,0.25);
         color: rgba(255,255,255,0.75);
-        font-size: 15px;
         cursor: pointer;
         pointer-events: auto;
         display: flex; align-items: center; justify-content: center;
       }
+      .glyph-btn svg { width: 16px; height: 16px; fill: currentColor; stroke: currentColor; }
+      .glyph-btn svg[fill="none"] { fill: none; }
+      .glyph-btn svg circle { fill: currentColor; }
       .glyph-btn:hover { background: rgba(255,255,255,0.1); }
-      #glyph-row { display: flex; gap: 8px; }
 
       /* ─── Wall timer ──────────────────────────────────────────────
          The wall was on a hidden timer with only a 3s border flash. It
@@ -91,7 +106,7 @@
         position: absolute;
         left: calc(16px + env(safe-area-inset-left));
         right: calc(16px + env(safe-area-inset-right));
-        top: calc(74px + env(safe-area-inset-top));
+        top: calc(82px + env(safe-area-inset-top));
         height: 3px;
         border-radius: 2px;
         background: rgba(255,255,255,0.12);
@@ -161,6 +176,8 @@
         align-items: center;
         justify-content: center;
         pointer-events: auto;
+        text-align: center;
+        padding: 0 calc(24px + env(safe-area-inset-right)) 0 calc(24px + env(safe-area-inset-left));
       }
       #game-over-screen h1 { font-size: 48px; margin-bottom: 10px; }
       #game-over-screen p { font-size: 24px; margin-bottom: 8px; }
@@ -220,7 +237,7 @@
       #level-up {
         display: none;
         position: absolute;
-        top: 40%;
+        top: var(--announce-y);
         left: 50%;
         transform: translate(-50%, -50%);
         font-size: 42px;
@@ -242,7 +259,7 @@
       #row-clear {
         display: none;
         position: absolute;
-        top: 48%;
+        top: var(--announce-y);
         left: 50%;
         transform: translate(-50%, -50%);
         font-size: 34px;
@@ -282,7 +299,7 @@
       #chain-counter {
         display: none;
         position: absolute;
-        top: 28%;
+        top: var(--announce-y);
         left: 50%;
         transform: translate(-50%, -50%);
         font-size: 56px;
@@ -331,7 +348,7 @@
       #clutch-banner {
         display: none;
         position: absolute;
-        top: 42%;
+        top: var(--announce-y);
         left: 50%;
         transform: translate(-50%, -50%);
         font-size: 40px;
@@ -343,7 +360,8 @@
         white-space: nowrap;
       }
       /* Game-over extras */
-      #run-stats { font-size: 15px; color: rgba(255,255,255,0.65); margin-bottom: 6px; }
+      #run-stats { font-size: 15px; line-height: 1.4; color: rgba(255,255,255,0.65); margin-bottom: 6px; max-width: 34em; }
+      .recap-item { white-space: nowrap; }
       #daily-result { display: none; font-size: 15px; color: #ffd166; margin-bottom: 8px; }
       .retry-hint { font-size: 13px; color: rgba(255,255,255,0.4); margin-top: 14px; }
     </style>
@@ -352,17 +370,23 @@
     <div id="ui">
       <div id="topbar">
         <div class="bar-slot left">
-          <div id="hold-preview"></div>
-          <span class="bar-caption">HOLD</span>
+          <div class="hold-col">
+            <div id="hold-preview"></div>
+            <span class="bar-caption">HOLD</span>
+          </div>
+          <div id="glyph-col">
+            <button id="pause-btn" class="glyph-btn" aria-label="Pause">
+              <svg viewBox="0 0 16 16" aria-hidden="true"><rect x="4" y="3" width="2.6" height="10" rx="1"/><rect x="9.4" y="3" width="2.6" height="10" rx="1"/></svg>
+            </button>
+            <button id="daily-btn" class="glyph-btn" aria-label="Daily challenge">
+              <svg viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke-width="1.5"><rect x="2.5" y="3.5" width="11" height="10" rx="2"/><path d="M2.5 6.5h11M5.5 2v3M10.5 2v3"/><circle cx="8" cy="10" r="1.3" stroke="none"/></svg>
+            </button>
+          </div>
         </div>
-        <div class="bar-slot">
+        <div class="bar-slot center">
           <strong id="score-val">0</strong>
           <span id="score-sub">Best <strong id="best-val">0</strong> · <span id="level-val">Level 1</span></span>
           <span id="daily-indicator" hidden>DAILY RUN</span>
-          <div id="glyph-row">
-            <button id="pause-btn" class="glyph-btn" aria-label="Pause">| |</button>
-            <button id="daily-btn" class="glyph-btn" aria-label="Daily challenge">&#128197;</button>
-          </div>
         </div>
         <div class="bar-slot right">
           <div id="queue-preview">
@@ -379,6 +403,7 @@
       <div id="clutch-banner"></div>
       <div id="flash-overlay"></div>
       <div id="wall-warning"></div>
+      <div id="announcer"></div>
       <div id="chain-counter"></div>
       <div id="level-up"></div>
       <div id="row-clear"></div>
