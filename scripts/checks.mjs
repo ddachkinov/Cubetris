@@ -10,7 +10,7 @@
 
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { openGame, startHarness } from './vclock.mjs';
+import { launchBrowser, openGame, startHarness } from './vclock.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const filters = process.argv.slice(2);
@@ -50,16 +50,8 @@ async function idleUntilGameOver(page, maxFrames) {
   const before = await hs(page);
   const after = await page.evaluate((limit) => {
     const h = window.__hs;
-    let levelUps = 0;
-    let level = h.level;
-    for (let i = 0; i < limit && !h.gameOver; i++) {
-      window.__replay.run(1);
-      if (h.level !== level) {
-        levelUps++;
-        level = h.level;
-      }
-    }
-    return { level: h.level, score: h.score, gameOver: h.gameOver, frame: window.__replay.frame, levelUps };
+    for (let i = 0; i < limit && !h.gameOver; i++) window.__replay.run(1);
+    return { level: h.level, score: h.score, gameOver: h.gameOver, frame: window.__replay.frame };
   }, maxFrames);
   const secs = ((after.frame - before.frame) / 60).toFixed(1);
   check(after.level === before.level && after.score === before.score,
@@ -89,6 +81,61 @@ const CHECKS = [
       return idleUntilGameOver(page, 12 * 60 * 4);
     },
   },
+  {
+    // Bug 2: the wall waited for a cascade to finish but not for a shot in
+    // flight. A cube landing while the wall's cascade was resolving replaced
+    // it, and the clears that cascade had already made never counted. Here
+    // the wall's cascade has a staged triple to clear, worth the 3 clears
+    // that reach level 2, and a shot is half way down a lane when the wall
+    // comes due.
+    name: 'shot-in-flight-at-wall',
+    async run(page) {
+      // The first shot starts the wall and times a flight to the far row
+      await page.evaluate(() => {
+        window.__hs.clearBoard();
+        window.__hs.setCur({ col: 5 });
+      });
+      await press(page, 'Space');
+      const flight = await settle(page);
+      await page.evaluate(() => {
+        const h = window.__hs;
+        h.clearBoard();
+        h.setLevelClears(3);
+        for (let c = 0; c < 3; c++) h.placeCube(c, 11, 0);
+        h.setCur({ col: 6 });
+      });
+      check((await hs(page)).level === 1, 'staged run is not on level 1');
+
+      const r = await page.evaluate((lead) => {
+        const h = window.__hs;
+        const rp = window.__replay;
+        let fired = null;
+        for (let i = 0; i < 1200; i++) {
+          const before = h.wall.timer;
+          if (fired === null && (h.wall.interval - before) * 60 <= lead) {
+            fired = rp.frame;
+            rp.run(1, [{ f: rp.frame, key: 'Space' }]);
+          } else {
+            rp.run(1);
+          }
+          if (fired !== null && h.wall.timer < before) {
+            return { fired, advanced: rp.frame, inFlight: h.busy };
+          }
+        }
+        return null;
+      }, Math.floor(flight / 2));
+      check(r, 'the wall never advanced');
+      await settle(page);
+      const end = await hs(page);
+      check(!r.inFlight, `the wall advanced with a shot in flight (fired at frame ${r.fired}, wall at ${r.advanced})`);
+      // It waits for the shot and the cascade the shot sets off (one 180 ms
+      // step here), and no longer
+      check(r.advanced - r.fired <= flight + 30,
+        `the wall waited ${r.advanced - r.fired} frames after a ${flight}-frame shot was fired`);
+      check(end.level === 2, `level ${end.level} after the staged triple: its clears were lost`);
+      return `wall waited for a ${flight}-frame shot and its cascade, ${r.advanced - r.fired} frames; level 2`;
+    },
+  },
 ];
 
 // ─── Runner ──────────────────────────────────────────────────────────────────
@@ -96,14 +143,17 @@ async function main() {
   const checks = CHECKS.filter((c) => !filters.length || filters.some((f) => c.name.includes(f)));
   if (!checks.length) throw new Error(`no check matches ${filters.join(', ')}`);
 
-  const harness = await startHarness(ROOT, 5197);
+  const harness = await startHarness(ROOT, 5197, { browser: false });
   const errors = [];
   let failed = 0;
   try {
     for (const c of checks) {
       const t0 = Date.now();
       const errorsBefore = errors.length;
-      const { context, page } = await openGame(harness.browser, harness.baseUrl, errors);
+      // A fresh browser each: a page opened after another closed in the same
+      // browser ran the virtual clock some 30 times slower
+      const browser = await launchBrowser();
+      const { page } = await openGame(browser, harness.baseUrl, errors);
       try {
         await step(page, 2);
         const note = await c.run(page);
@@ -113,7 +163,7 @@ async function main() {
         failed++;
         console.log(`FAIL ${c.name}: ${err.message.split('\n')[0]}`);
       } finally {
-        await context.close();
+        await browser.close();
       }
     }
   } finally {

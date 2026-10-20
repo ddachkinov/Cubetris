@@ -138,19 +138,23 @@ export const look = (page) => page.evaluate(() => ({
 }));
 
 
-// Vite on `port` and headless Chromium. Headless Chromium has no GPU;
-// SwiftShader gives three.js a WebGL context. close() stops both.
-export async function startHarness(root, port) {
-  const server = await createServer({ root, logLevel: 'error', server: { port, open: false } });
-  await server.listen();
-  const browser = await chromium.launch({
+// Headless Chromium has no GPU; SwiftShader gives three.js a WebGL context
+export function launchBrowser() {
+  return chromium.launch({
     args: ['--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist'],
   });
+}
+
+// Vite on `port` and, unless { browser: false }, a browser. close() stops both.
+export async function startHarness(root, port, { browser: withBrowser = true } = {}) {
+  const server = await createServer({ root, logLevel: 'error', server: { port, open: false } });
+  await server.listen();
+  const browser = withBrowser ? await launchBrowser() : null;
   return {
     baseUrl: server.resolvedUrls.local[0],
     browser,
     async close() {
-      await browser.close();
+      await browser?.close();
       await server.close();
     },
   };

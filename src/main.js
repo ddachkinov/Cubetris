@@ -188,6 +188,9 @@ const CASCADE_STEP_SECONDS = 0.18;
 const CASCADE_FALL_SPEED = 1 / 0.12; // 120ms fall, expressed the way pushWallAnim wants it
 
 function beginCascade(onDone) {
+  // Never two at once: the second would replace the first, and the first's
+  // clears would never reach checkLevelUp. The harnesses fail on this.
+  if (state.cascade) console.error('beginCascade: a cascade is already resolving');
   state.cascade = {
     dangerBefore: isInDanger(state.grid),
     totalCleared: 0,
@@ -309,8 +312,10 @@ function shoot() {
   // in ~300ms, and swallowing a press in that window feels like a missed
   // tap. Also buffered while a cascade is still resolving -- firing a
   // second cube mid-chain would try to start a second cascade on top of
-  // the first one and corrupt both.
-  if (state.shootingCube || state.cascade) {
+  // the first one and corrupt both. And buffered while the wall is due: it
+  // waits for a shot in flight to land, so a stream of shots must not keep
+  // it waiting.
+  if (state.shootingCube || state.cascade || wallDue()) {
     state.queuedShot = true;
     return;
   }
@@ -391,17 +396,25 @@ function updateShooting(dt) {
     state.shootingCube = null;
     state.shootingVelocity = null;
 
-    beginCascade(() => {
-      checkGameOver();
-      if (state.queuedShot) {
-        state.queuedShot = false;
-        if (!state.gameOver) shoot();
-      }
-    });
+    beginCascade(afterCascade);
+  }
+}
+
+// After a shot's or the wall's cascade: the run may be over, and a shot
+// pressed meanwhile goes now
+function afterCascade() {
+  checkGameOver();
+  if (state.queuedShot) {
+    state.queuedShot = false;
+    if (!state.gameOver) shoot();
   }
 }
 
 // ─── Wall advancement ────────────────────────────────────────────────────────
+function wallDue() {
+  return state.wallStarted && state.wallAdvanceTimer >= wallInterval(state.level);
+}
+
 function advanceWall() {
   if (reachedFront(state.grid)) {
     triggerGameOver();
@@ -434,9 +447,7 @@ function advanceWall() {
     }
   }
 
-  beginCascade(() => {
-    checkGameOver();
-  });
+  beginCascade(afterCascade);
 }
 
 // ─── Game Over ───────────────────────────────────────────────────────────────
@@ -687,12 +698,16 @@ function animate() {
 
     // Wall advance -- frozen until the first shot, and while a cascade is
     // still resolving (advancing on top of an in-progress chain would try
-    // to start a second cascade and corrupt both).
+    // to start a second cascade and corrupt both). Once due it also waits
+    // for a shot in flight: that cube would land on the wall's cascade and
+    // replace it. Shots pressed while it waits are buffered (see shoot()).
     if (state.wallStarted && !state.cascade) {
-      state.wallAdvanceTimer += gameDt;
       const currentInterval = wallInterval(state.level);
-      showWallTimer(currentInterval - state.wallAdvanceTimer, currentInterval);
-      if (state.wallAdvanceTimer >= currentInterval) {
+      if (!wallDue()) {
+        state.wallAdvanceTimer += gameDt;
+        showWallTimer(currentInterval - state.wallAdvanceTimer, currentInterval);
+      }
+      if (wallDue() && !state.shootingCube) {
         state.wallAdvanceTimer = 0;
         hideWallWarning();
         advanceWall();
@@ -727,10 +742,15 @@ if (new URLSearchParams(location.search).get('debug') === '1') {
     get cur() {
       return { col: state.currentCol, color: state.currentColorIndex, next: [...state.nextQueue], held: state.heldColorIndex };
     },
-    // A shot in flight or a cascade still resolving; input pressed now is buffered
-    get busy() { return !!(state.shootingCube || state.cascade); },
+    // A shot in flight, a cascade still resolving or a buffered shot waiting
+    // to go; a shot pressed now is buffered
+    get busy() { return !!(state.shootingCube || state.cascade || state.queuedShot); },
     get gameOver() { return state.gameOver; },
     get danger() { return state.dangerActive; },
+    // Seconds on the wall timer (negative = breather), the current interval
+    get wall() {
+      return { started: state.wallStarted, timer: state.wallAdvanceTimer, interval: wallInterval(state.level) };
+    },
     landingRow: (col) => landingRow(state.grid, col),
     // Stage a cube without resolving matches; returns false if the cell is taken
     placeCube(col, row, colorIndex) {
