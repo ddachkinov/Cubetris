@@ -17,7 +17,14 @@ nvm use          # Node 22, from .nvmrc
 npm install
 npm run dev      # http://localhost:5173
 npm run build    # -> dist/
+npm run shots    # 8 scene screenshots -> shots/, non-zero exit on any page error
 ```
+
+`npm run shots` (`scripts/shoot.mjs`) boots Vite, drives the game in headless Chromium
+and screenshots eight scenes: opening, aiming, a greedy bot's game, a staged ×2 chain,
+level-up, danger, game over, and desktop. Pass part of a scene name to run only that
+one (`npm run shots -- chain`). It reaches the game through `window.__hs`, a debug hook
+that exists only when the page is loaded with `?debug=1`.
 
 No assets, no backend, no account. All audio is synthesized with Web Audio at runtime
 and all visuals are Three.js primitives, so the whole game is the JavaScript bundle.
@@ -30,6 +37,7 @@ and all visuals are Three.js primitives, so the whole game is the JavaScript bun
 | `src/main.js` | Game loop, board state, rules, rendering, input, SFX |
 | `src/music.js` | `MusicEngine` — four synthesized stems driven by gameplay intensity, plus a beat grid used to quantize sound effects |
 | `src/themes.js` | Per-theme environment palette, cube palette and music key |
+| `scripts/shoot.mjs` | Screenshot harness behind `npm run shots` |
 | `docs/APPSTORE_PLAN.md` | Recon, IP audit, design spec and the phased plan to ship on iOS |
 | `docs/DESIGN_AUDIT_2026-02.md` | Earlier design audit, kept for history |
 
