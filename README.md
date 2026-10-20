@@ -18,6 +18,7 @@ npm install
 npm run dev      # http://localhost:5173
 npm run build    # -> dist/
 npm run shots    # 8 scene screenshots -> shots/, non-zero exit on any page error
+npm run replay   # replay a recorded 60 s daily run, fail unless it ends identically
 ```
 
 `npm run shots` (`scripts/shoot.mjs`) boots Vite, drives the game in headless Chromium
@@ -25,6 +26,14 @@ and screenshots eight scenes: opening, aiming, a greedy bot's game, a staged ×2
 level-up, danger, game over, and desktop. Pass part of a scene name to run only that
 one (`npm run shots -- chain`). It reaches the game through `window.__hs`, a debug hook
 that exists only when the page is loaded with `?debug=1`.
+
+`npm run replay` (`scripts/replay.mjs`) is the refactoring safety net. It runs the game
+on a virtual clock (fixed 1/60 s frames, a fixed date, seeded `Math.random`) and feeds it
+`scripts/replays/daily-60s.json`: 60 s of daily-seed play recorded from a bot as plain
+DOM events (keys, taps, clicks) at exact frame numbers. The run must end on the recorded
+score, level, grid and hand, or the script fails and names the first 5 s checkpoint
+where the two runs diverge. `npm run replay -- --record` re-records it, for when the
+gameplay is *meant* to change.
 
 No assets, no backend, no account. All audio is synthesized with Web Audio at runtime
 and all visuals are Three.js primitives, so the whole game is the JavaScript bundle.
@@ -38,6 +47,8 @@ and all visuals are Three.js primitives, so the whole game is the JavaScript bun
 | `src/music.js` | `MusicEngine` — four synthesized stems driven by gameplay intensity, plus a beat grid used to quantize sound effects |
 | `src/themes.js` | Per-theme environment palette, cube palette and music key |
 | `scripts/shoot.mjs` | Screenshot harness behind `npm run shots` |
+| `scripts/replay.mjs` | Input record/replay harness behind `npm run replay`; the recording is in `scripts/replays/` |
+| `scripts/bot.mjs` | The greedy bot and seeded `Math.random` both harnesses use |
 | `docs/APPSTORE_PLAN.md` | Recon, IP audit, design spec and the phased plan to ship on iOS |
 | `docs/DESIGN_AUDIT_2026-02.md` | Earlier design audit, kept for history |
 
