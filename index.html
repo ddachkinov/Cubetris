@@ -2,8 +2,11 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Cubetris</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="theme-color" content="#08141f" />
+    <title>Hueshot</title>
     <style>
       * { margin: 0; padding: 0; box-sizing: border-box; }
       body { overflow: hidden; background: #111; font-family: 'Segoe UI', sans-serif; }
@@ -16,61 +19,109 @@
         height: 100%;
         pointer-events: none;
       }
-      #hud {
+      /* ─── Top bar ─────────────────────────────────────────────────
+         Everything the player reads at a glance lives in one row that
+         respects the notch/Dynamic Island and the home indicator. */
+      #topbar {
         position: absolute;
-        top: 20px;
-        left: 20px;
-        color: #fff;
-        font-size: 18px;
-      }
-      #hud span { display: block; margin-bottom: 6px; }
-      #hud .hud-best { color: rgba(255,255,255,0.45); font-size: 13px; }
-      #hud .hud-level { color: #7bf; font-size: 15px; font-weight: 700; }
-      #next-preview {
-        position: absolute;
-        top: 20px;
-        right: 20px;
-        width: 80px;
-        height: 80px;
-        border: 2px solid rgba(255,255,255,0.3);
-        border-radius: 8px;
+        top: 0; left: 0; right: 0;
         display: flex;
-        align-items: center;
-        justify-content: center;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 12px;
+        padding: calc(12px + env(safe-area-inset-top)) calc(16px + env(safe-area-inset-right))
+                 12px calc(16px + env(safe-area-inset-left));
+        color: #fff;
       }
-      #next-color-box {
-        width: 50px;
-        height: 50px;
-        border-radius: 6px;
+      .bar-slot { display: flex; flex-direction: column; align-items: center; gap: 6px; }
+      .bar-slot.left { align-items: flex-start; }
+      .bar-slot.right { align-items: flex-end; }
+      .bar-caption {
+        font-size: 10px;
+        letter-spacing: 1.5px;
+        color: rgba(255,255,255,0.45);
       }
-      #next-label {
-        position: absolute;
-        top: 104px;
-        right: 20px;
-        width: 80px;
-        text-align: center;
-        color: rgba(255,255,255,0.6);
+      #score-val {
+        font-size: 30px;
+        font-weight: 700;
+        font-variant-numeric: tabular-nums;
+        line-height: 1;
+      }
+      #score-sub {
         font-size: 12px;
+        font-variant-numeric: tabular-nums;
+        color: rgba(255,255,255,0.5);
       }
-      /* Pause button */
-      #pause-btn {
-        position: absolute;
-        top: 20px;
-        right: 110px;
-        width: 40px;
-        height: 40px;
-        border: 2px solid rgba(255,255,255,0.3);
-        border-radius: 8px;
-        background: rgba(0,0,0,0.3);
-        color: rgba(255,255,255,0.7);
-        font-size: 18px;
+      #level-val { color: #7bf; font-weight: 700; }
+      #daily-indicator { color: #ffd166; font-weight: 700; font-size: 13px; }
+      #daily-indicator[hidden] { display: none; }
+
+      /* Hold + next: colour chips, no keyboard letters */
+      #hold-preview {
+        width: 42px; height: 42px;
+        border-radius: 10px;
+        border: 2px dashed rgba(255,255,255,0.35);
+        pointer-events: auto;
+        cursor: pointer;
+      }
+      #queue-preview { display: flex; align-items: center; gap: 6px; }
+      .q-slot { width: 42px; height: 42px; border-radius: 10px; border: 2px solid rgba(255,255,255,0.3); }
+      .q-slot.small { width: 30px; height: 30px; opacity: 0.75; }
+      .q-slot.tiny { width: 22px; height: 22px; opacity: 0.5; }
+
+      /* Pause + daily: small glyphs, out of the way of the thumb */
+      .glyph-btn {
+        width: 34px; height: 34px;
+        border: 1px solid rgba(255,255,255,0.25);
+        border-radius: 9px;
+        background: rgba(0,0,0,0.25);
+        color: rgba(255,255,255,0.75);
+        font-size: 15px;
         cursor: pointer;
         pointer-events: auto;
-        display: flex;
-        align-items: center;
-        justify-content: center;
+        display: flex; align-items: center; justify-content: center;
       }
-      #pause-btn:hover { background: rgba(255,255,255,0.1); }
+      .glyph-btn:hover { background: rgba(255,255,255,0.1); }
+      #glyph-row { display: flex; gap: 8px; }
+
+      /* ─── Wall timer ──────────────────────────────────────────────
+         The wall was on a hidden timer with only a 3s border flash. It
+         is now always visible: a bar that drains toward the advance. */
+      #wall-timer {
+        position: absolute;
+        left: calc(16px + env(safe-area-inset-left));
+        right: calc(16px + env(safe-area-inset-right));
+        top: calc(74px + env(safe-area-inset-top));
+        height: 3px;
+        border-radius: 2px;
+        background: rgba(255,255,255,0.12);
+        overflow: hidden;
+      }
+      #wall-timer-fill {
+        height: 100%;
+        width: 100%;
+        transform-origin: left center;
+        background: #7bf;
+        transition: background-color 0.3s;
+      }
+      #wall-timer.imminent #wall-timer-fill { background: #ff4444; }
+
+      /* First-run hint — appears only if an untouched board sits idle */
+      #hint {
+        position: absolute;
+        left: 50%;
+        bottom: calc(64px + env(safe-area-inset-bottom));
+        transform: translateX(-50%);
+        padding: 10px 18px;
+        border-radius: 999px;
+        background: rgba(0,0,0,0.55);
+        color: rgba(255,255,255,0.9);
+        font-size: 14px;
+        white-space: nowrap;
+        opacity: 0;
+        transition: opacity 0.4s;
+      }
+      #hint.show { opacity: 1; }
       /* Pause screen */
       #pause-screen {
         display: none;
@@ -138,14 +189,6 @@
         margin-top: 10px;
       }
       #game-over-screen button:hover { background: #3a8eef; }
-      #column-indicator {
-        position: absolute;
-        bottom: 20px;
-        left: 50%;
-        transform: translateX(-50%);
-        color: rgba(255,255,255,0.6);
-        font-size: 14px;
-      }
       /* Score popups */
       .score-popup {
         position: absolute;
@@ -235,64 +278,110 @@
         0%, 100% { border-color: rgba(255, 34, 34, 0.15); }
         50%      { border-color: rgba(255, 34, 34, 0.6); }
       }
-      /* Tutorial overlay */
-      #tutorial {
+      /* Chain counter */
+      #chain-counter {
         display: none;
         position: absolute;
+        top: 28%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        font-size: 56px;
+        font-weight: 900;
+        pointer-events: none;
+        z-index: 14;
+        color: #ff6ef5;
+        text-shadow: 0 0 20px rgba(255,110,245,0.8), 0 0 40px rgba(255,110,245,0.3);
+      }
+      @keyframes chain-pop {
+        0%   { opacity: 0; transform: translate(-50%, -50%) scale(0.5); }
+        15%  { opacity: 1; transform: translate(-50%, -50%) scale(1.3); }
+        30%  { transform: translate(-50%, -50%) scale(1); }
+        80%  { opacity: 1; }
+        100% { opacity: 0; transform: translate(-50%, -60%) scale(0.7); }
+      }
+      /* Flash overlay */
+      #flash-overlay {
+        position: absolute;
         top: 0; left: 0; width: 100%; height: 100%;
-        background: rgba(0,0,0,0.88);
-        color: #fff;
-        flex-direction: column;
-        align-items: center;
-        justify-content: center;
-        pointer-events: auto;
-        z-index: 100;
-        text-align: center;
-        gap: 18px;
+        pointer-events: none;
+        background: white;
+        opacity: 0;
+        z-index: 4;
+        transition: opacity 0.05s;
       }
-      #tutorial h2 { font-size: 36px; color: #7bf; margin-bottom: 4px; }
-      #tutorial .tut-line { font-size: 18px; color: rgba(255,255,255,0.8); line-height: 1.6; }
-      #tutorial .tut-keys { font-size: 15px; color: rgba(255,255,255,0.5); }
-      #tutorial .tut-keys kbd {
-        display: inline-block;
-        padding: 2px 8px;
-        border: 1px solid rgba(255,255,255,0.3);
-        border-radius: 4px;
-        background: rgba(255,255,255,0.08);
-        font-family: inherit;
-        font-size: 14px;
-        margin: 0 2px;
+      /* Danger vignette — heartbeat red edges when cubes near the front */
+      #danger-vignette {
+        position: absolute;
+        top: 0; left: 0; width: 100%; height: 100%;
+        pointer-events: none;
+        z-index: 6;
+        opacity: 0;
+        transition: opacity 0.4s;
+        box-shadow: inset 0 0 120px rgba(255, 20, 20, 0.45);
       }
-      #tutorial button {
-        font-size: 22px;
-        padding: 14px 40px;
-        border: none;
-        border-radius: 8px;
-        background: #4a9eff;
-        color: #fff;
-        cursor: pointer;
-        margin-top: 10px;
-        font-weight: 700;
+      body.danger #danger-vignette {
+        opacity: 1;
+        animation: danger-pulse 0.9s ease-in-out infinite;
       }
-      #tutorial button:hover { background: #3a8eef; }
+      @keyframes danger-pulse {
+        0%, 100% { box-shadow: inset 0 0 100px rgba(255, 20, 20, 0.3); }
+        50%      { box-shadow: inset 0 0 160px rgba(255, 20, 20, 0.55); }
+      }
+      /* Clutch save banner */
+      #clutch-banner {
+        display: none;
+        position: absolute;
+        top: 42%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        font-size: 40px;
+        font-weight: 900;
+        color: #66ffe0;
+        text-shadow: 0 0 18px rgba(102,255,224,0.8), 0 0 40px rgba(102,255,224,0.4);
+        pointer-events: none;
+        z-index: 16;
+        white-space: nowrap;
+      }
+      /* Game-over extras */
+      #run-stats { font-size: 15px; color: rgba(255,255,255,0.65); margin-bottom: 6px; }
+      #daily-result { display: none; font-size: 15px; color: #ffd166; margin-bottom: 8px; }
+      .retry-hint { font-size: 13px; color: rgba(255,255,255,0.4); margin-top: 14px; }
     </style>
   </head>
   <body>
     <div id="ui">
-      <div id="hud">
-        <span>Score: <strong id="score-val">0</strong></span>
-        <span class="hud-best">Best: <strong id="best-val">0</strong></span>
-        <span class="hud-level" id="level-val">Level 1</span>
+      <div id="topbar">
+        <div class="bar-slot left">
+          <div id="hold-preview"></div>
+          <span class="bar-caption">HOLD</span>
+        </div>
+        <div class="bar-slot">
+          <strong id="score-val">0</strong>
+          <span id="score-sub">Best <strong id="best-val">0</strong> · <span id="level-val">Level 1</span></span>
+          <span id="daily-indicator" hidden>DAILY RUN</span>
+          <div id="glyph-row">
+            <button id="pause-btn" class="glyph-btn" aria-label="Pause">| |</button>
+            <button id="daily-btn" class="glyph-btn" aria-label="Daily challenge">&#128197;</button>
+          </div>
+        </div>
+        <div class="bar-slot right">
+          <div id="queue-preview">
+            <div class="q-slot tiny" id="q-slot-2"></div>
+            <div class="q-slot small" id="q-slot-1"></div>
+            <div class="q-slot" id="q-slot-0"></div>
+          </div>
+          <span class="bar-caption">NEXT</span>
+        </div>
       </div>
-      <button id="pause-btn">| |</button>
-      <div id="next-preview">
-        <div id="next-color-box"></div>
-      </div>
-      <div id="next-label">NEXT</div>
+      <div id="wall-timer"><div id="wall-timer-fill"></div></div>
+      <div id="hint">Drag to aim · release to drop</div>
+      <div id="danger-vignette"></div>
+      <div id="clutch-banner"></div>
+      <div id="flash-overlay"></div>
       <div id="wall-warning"></div>
+      <div id="chain-counter"></div>
       <div id="level-up"></div>
       <div id="row-clear"></div>
-      <div id="column-indicator">← A/D → move | SPACE shoot | W/S quick drop | ESC pause</div>
       <div id="pause-screen">
         <h1>PAUSED</h1>
         <button id="resume-btn">Resume</button>
@@ -303,15 +392,10 @@
         <p>Score: <strong id="final-score">0</strong></p>
         <p class="best-line">Best: <strong id="final-best">0</strong></p>
         <div id="new-best">NEW BEST!</div>
+        <p id="run-stats"></p>
+        <p id="daily-result"></p>
         <button id="restart-btn">Play Again</button>
-      </div>
-      <div id="tutorial">
-        <h2>CUBETRIS</h2>
-        <div class="tut-line">Shoot colored cubes down the corridor.<br>Match <strong>3 or more</strong> of the same color to clear them!</div>
-        <div class="tut-line">Chain combos for massive multipliers.</div>
-        <div class="tut-keys"><kbd>A</kbd> / <kbd>←</kbd> &nbsp; Move left &nbsp;&nbsp; <kbd>D</kbd> / <kbd>→</kbd> &nbsp; Move right &nbsp;&nbsp; <kbd>Space</kbd> &nbsp; Shoot &nbsp;&nbsp; <kbd>W</kbd> / <kbd>S</kbd> &nbsp; Quick drop &nbsp;&nbsp; <kbd>Esc</kbd> &nbsp; Pause</div>
-        <div class="tut-keys">Mobile: drag to move, tap to shoot</div>
-        <button id="tutorial-btn">GOT IT</button>
+        <p class="retry-hint">Tap the board to try again</p>
       </div>
     </div>
     <script type="module" src="/src/main.js"></script>
