@@ -8,7 +8,7 @@ import { THEMES } from './themes.js';
 import {
   GRID_COLS, GRID_ROWS, SHOOT_SPEED, ROW_CLEAR_BONUS,
   activeColorCount, wallInterval, levelForClears, themeIndexForLevel,
-  mulberry32, dailySeed, randomColorIndex, generateWallRow, seedOpeningRows,
+  dailyRngs, randomColorIndex, generateWallRow, seedOpeningRows,
   landingRow, reachedFront, isInDanger, computeRemovalSet, fullRowCount, gravityMoves,
 } from './game/rules.js';
 import { state, serialize, deserialize } from './game/state.js';
@@ -47,7 +47,7 @@ let currentThemeIndex = -1;
 
 // Next cube for the hand: from the bag, or a special at higher levels
 function dealColor() {
-  return randomColorIndex(state.bag, state.level, state.rng);
+  return randomColorIndex(state.bag, state.level, state.queueRng);
 }
 
 state.currentColorIndex = dealColor();
@@ -105,7 +105,7 @@ function removeCube(col, row) {
 
 // A guaranteed first clear, see seedOpeningRows()
 function placeOpeningSeeds() {
-  const seeds = seedOpeningRows(state.rng, state.currentColorIndex, state.nextQueue[0]);
+  const seeds = seedOpeningRows(state.wallRng, state.currentColorIndex, state.nextQueue[0]);
   for (const { col, row, colorIndex } of seeds) placeCube(col, row, colorIndex);
 }
 
@@ -436,7 +436,7 @@ function advanceWall() {
     grid[c][GRID_ROWS - 1] = null;
   }
 
-  const wallRow = generateWallRow(state.rng, activeColorCount(state.level), grid);
+  const wallRow = generateWallRow(state.wallRng, activeColorCount(state.level), grid);
   for (let c = 0; c < GRID_COLS; c++) {
     const cell = placeCube(c, GRID_ROWS - 1, wallRow[c]);
     if (cell) {
@@ -495,9 +495,13 @@ function clearBoard() {
 }
 
 function restartGame(asDaily = false) {
-  // Daily runs use a date-seeded PRNG — everyone gets the same board today
+  // Daily runs use date-seeded PRNGs — everyone gets the same board today
   state.dailyMode = !!asDaily;
-  state.rng = state.dailyMode ? mulberry32(dailySeed(todayKey())) : Math.random;
+  const { queueRng, wallRng } = state.dailyMode
+    ? dailyRngs(todayKey())
+    : { queueRng: Math.random, wallRng: Math.random };
+  state.queueRng = queueRng;
+  state.wallRng = wallRng;
   state.bag = { colors: [], count: 0 };
   setDailyIndicator(state.dailyMode);
 

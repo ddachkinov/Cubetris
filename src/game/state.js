@@ -9,8 +9,10 @@ export const state = {
   level: 1,
   totalClearedCount: 0,
 
-  // Swappable RNG — Math.random normally, a date-seeded PRNG for Daily runs
-  rng: Math.random,
+  // Swappable RNGs — Math.random normally, date-seeded PRNGs for Daily runs:
+  // one deals the queue, one builds the board (see dailyRngs)
+  queueRng: Math.random,
+  wallRng: Math.random,
   dailyMode: false,
 
   // Bag-based colour dealing, see drawColorFromBag()
@@ -62,7 +64,10 @@ export const state = {
 // saved, so save only when neither is; tweens, particles and the camera
 // shake are cosmetic and start fresh. A run on Math.random saves no RNG
 // state and resumes on Math.random.
-const SAVE_VERSION = 1;
+const SAVE_VERSION = 2;
+
+const rngState = (rng) => (rng.state ? rng.state() : null);
+const resumeRng = (saved) => (saved === null ? Math.random : mulberry32(saved));
 
 export function serialize(s = state) {
   if (s.shootingCube || s.cascade) throw new Error('serialize: a shot or cascade is still resolving');
@@ -71,7 +76,8 @@ export function serialize(s = state) {
     level: s.level,
     totalClearedCount: s.totalClearedCount,
     dailyMode: s.dailyMode,
-    rng: s.rng.state ? s.rng.state() : null,
+    queueRng: rngState(s.queueRng),
+    wallRng: rngState(s.wallRng),
     bag: { colors: [...s.bag.colors], count: s.bag.count },
     grid: s.grid.map((lane) => lane.map((cell) => (cell ? cell.colorIndex : null))),
     currentCol: s.currentCol,
@@ -95,7 +101,8 @@ export function deserialize(data, s = state) {
   s.level = data.level;
   s.totalClearedCount = data.totalClearedCount;
   s.dailyMode = data.dailyMode;
-  s.rng = data.rng === null ? Math.random : mulberry32(data.rng);
+  s.queueRng = resumeRng(data.queueRng);
+  s.wallRng = resumeRng(data.wallRng);
   s.bag = { colors: [...data.bag.colors], count: data.bag.count };
   s.grid = data.grid.map((lane) => lane.map((c) => (c === null ? null : { mesh: null, colorIndex: c })));
   s.currentCol = data.currentCol;

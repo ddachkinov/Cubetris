@@ -85,6 +85,21 @@ export function dailySeed(dateKey) {
   return hashString('hueshot-' + dateKey);
 }
 
+// A daily run draws from two streams: one deals the player's queue, the
+// other builds the board (the opening seeds, then the wall rows). With one
+// stream for both, each wall row took its draws from wherever the queue had
+// got to, so shooting a little sooner or later than someone else gave a
+// different queue and different walls from then on. Kept apart, the n-th
+// cube dealt and the n-th wall row's draws are the same for everyone that
+// day, whenever they shoot. (A wall lane can still differ where the drawn
+// colour would hand that player's board a match; see generateWallRow.)
+export function dailyRngs(dateKey) {
+  return {
+    queueRng: mulberry32(dailySeed(dateKey)),
+    wallRng: mulberry32(hashString('hueshot-wall-' + dateKey)),
+  };
+}
+
 // ─── Bag-based colour dealing ────────────────────────────────────────────────
 // 2 of each active colour per bag, shuffled. Kills droughts/floods so the
 // game feels fair. `bag` is { colors, count } and is the only thing changed.

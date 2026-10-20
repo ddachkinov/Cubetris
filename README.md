@@ -46,8 +46,9 @@ property test that a freshly advanced wall never hands the player a match.
 `npm run checks` (`scripts/checks.mjs`) plays scripted situations through the real
 build on the same virtual clock as the replay (`scripts/vclock.mjs`) and fails unless
 each ends the way the rules say: an idle board, left alone after one shot, must not
-score or level up before the wall reaches the front, and a wall that comes due while
-a shot is in flight waits for it to land. Pass part of a check's name to run only
+score or level up before the wall reaches the front; a wall that comes due while
+a shot is in flight waits for it to land; and two runs of the same Daily that time
+their shots differently still get the same hand and the same wall rows. Pass part of a check's name to run only
 that one. A cascade starting while another is still resolving logs a console error,
 which fails every harness.
 

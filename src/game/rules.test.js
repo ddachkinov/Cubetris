@@ -3,7 +3,7 @@ import {
   GRID_COLS, GRID_ROWS, NUM_COLORS, RAINBOW_INDEX, BOMB_INDEX,
   WALL_ADVANCE_INTERVAL_MIN,
   activeColorCount, wallInterval, levelForClears, themeIndexForLevel,
-  mulberry32, dailySeed, drawColorFromBag, randomColorIndex,
+  mulberry32, dailySeed, dailyRngs, drawColorFromBag, randomColorIndex,
   generateWallRow, seedOpeningRows,
   landingRow, findMatchGroup, computeRemovalSet, fullRowCount, gravityMoves,
 } from './rules.js';
@@ -75,13 +75,18 @@ function randomSettledBoard(rng, colorCount) {
   return grid;
 }
 
-// The grid half of advanceWall() in main.js: every lane steps one row toward
-// the player and a generated row fills the far wall.
-function advanceWall(grid, rng, colorCount) {
+// Every lane steps one row toward the player, leaving the far row empty
+function stepLanes(grid) {
   for (let c = 0; c < GRID_COLS; c++) {
     for (let r = 0; r < FAR; r++) grid[c][r] = grid[c][r + 1];
     grid[c][FAR] = null;
   }
+}
+
+// The grid half of advanceWall() in main.js: every lane steps one row toward
+// the player and a generated row fills the far wall.
+function advanceWall(grid, rng, colorCount) {
+  stepLanes(grid);
   const row = generateWallRow(rng, colorCount, grid);
   for (let c = 0; c < GRID_COLS; c++) grid[c][FAR] = { colorIndex: row[c] };
 }
@@ -265,6 +270,20 @@ describe('generateWallRow', () => {
       }
     }
   });
+
+  // So the n-th wall row of a Daily draws the same numbers on every board
+  it('takes exactly one draw per lane, whatever the board', () => {
+    const boards = mulberry32(5);
+    for (const colorCount of [3, 4, 5]) {
+      for (let trial = 0; trial < 100; trial++) {
+        const grid = randomSettledBoard(boards, colorCount);
+        stepLanes(grid);
+        let draws = 0;
+        generateWallRow(() => { draws++; return boards(); }, colorCount, grid);
+        expect(draws).toBe(GRID_COLS);
+      }
+    }
+  });
 });
 
 // ─── Opening seed ────────────────────────────────────────────────────────────
@@ -315,21 +334,27 @@ describe('daily determinism', () => {
   const DAILY_SEED_2026_10_20 = 2271995213;
   const FIRST_DRAWS_2026_10_20 = [0.6045638311188668, 0.5123325088061392, 0.4318172540515661];
 
-  // Everything a daily run draws from the RNG before the player acts: the
-  // hand, the opening seeds, then the first few wall rows.
+  const FIRST_WALL_DRAWS_2026_10_20 = [0.08767415257170796, 0.3620250739622861, 0.6966757776681334];
+
+  // Everything a daily run draws before the player acts: the hand from the
+  // queue stream; the opening seeds, then the first few wall rows, from the
+  // wall stream.
   function dailyOpening(dateKey) {
-    const rng = mulberry32(dailySeed(dateKey));
+    const { queueRng, wallRng } = dailyRngs(dateKey);
     const bag = { colors: [], count: 0 };
-    const hand = Array.from({ length: 12 }, () => randomColorIndex(bag, 1, rng));
-    const seeds = seedOpeningRows(rng, hand[0], hand[1]);
-    const walls = Array.from({ length: 5 }, () => generateWallRow(rng, activeColorCount(1)));
+    const hand = Array.from({ length: 12 }, () => randomColorIndex(bag, 1, queueRng));
+    const seeds = seedOpeningRows(wallRng, hand[0], hand[1]);
+    const walls = Array.from({ length: 5 }, () => generateWallRow(wallRng, activeColorCount(1)));
     return { hand, seeds, walls };
   }
 
-  it('pins the seed for a date, so a refactor cannot silently change the board', () => {
+  it('pins the seeds for a date, so a refactor cannot silently change the board', () => {
     expect(dailySeed('2026-10-20')).toBe(DAILY_SEED_2026_10_20);
     const rng = mulberry32(DAILY_SEED_2026_10_20);
     expect(Array.from({ length: 3 }, () => rng())).toEqual(FIRST_DRAWS_2026_10_20);
+    const { queueRng, wallRng } = dailyRngs('2026-10-20');
+    expect(Array.from({ length: 3 }, () => queueRng())).toEqual(FIRST_DRAWS_2026_10_20);
+    expect(Array.from({ length: 3 }, () => wallRng())).toEqual(FIRST_WALL_DRAWS_2026_10_20);
   });
 
   it('deals the same opening to everyone on the same date', () => {
@@ -339,6 +364,47 @@ describe('daily determinism', () => {
   it('deals a different opening on a different date', () => {
     expect(dailySeed('2026-10-21')).not.toBe(dailySeed('2026-10-20'));
     expect(dailyOpening('2026-10-21')).not.toEqual(dailyOpening('2026-10-20'));
+  });
+
+  // Bug 3: one stream fed both the queue and the wall rows, so the numbers
+  // a wall row drew depended on how many cubes had been dealt before it.
+  // A daily run reduced to the order main.js draws in: the hand at restart,
+  // the opening seeds, then a deal for every shot and a row for every wall
+  // advance, in whatever order the player's timing put them.
+  function drawsInOrder(timing, { queueRng, wallRng }) {
+    const bag = { colors: [], count: 0 };
+    const deal = () => randomColorIndex(bag, 1, queueRng);
+    const queue = [deal(), deal(), deal(), deal()];
+    seedOpeningRows(wallRng, queue[0], queue[1]);
+    const walls = [];
+    for (const event of timing) {
+      if (event === 'shot') queue.push(deal());
+      else walls.push(generateWallRow(wallRng, activeColorCount(1)));
+    }
+    return { queue, walls };
+  }
+  // The same six shots and three wall advances: one player shoots ahead of
+  // the wall, the other lets it come first.
+  const EARLY = ['shot', 'shot', 'shot', 'wall', 'shot', 'shot', 'wall', 'shot', 'wall'];
+  const LATE = ['shot', 'wall', 'shot', 'wall', 'shot', 'shot', 'wall', 'shot', 'shot'];
+
+  it('deals the same queue and wall rows however the shots are timed', () => {
+    const early = drawsInOrder(EARLY, dailyRngs('2026-10-20'));
+    const late = drawsInOrder(LATE, dailyRngs('2026-10-20'));
+    expect(early.queue).toHaveLength(10);
+    expect(early.walls).toHaveLength(3);
+    expect(late).toEqual(early);
+  });
+
+  it('would not with one stream for both, as before the split', () => {
+    const shared = () => {
+      const rng = mulberry32(dailySeed('2026-10-20'));
+      return { queueRng: rng, wallRng: rng };
+    };
+    const early = drawsInOrder(EARLY, shared());
+    const late = drawsInOrder(LATE, shared());
+    expect(late.queue).not.toEqual(early.queue);
+    expect(late.walls).not.toEqual(early.walls);
   });
 
   it('resumes a saved run on exactly the same sequence', () => {

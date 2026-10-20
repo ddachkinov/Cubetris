@@ -42,6 +42,10 @@ function check(cond, msg) {
   if (!cond) throw new Error(msg);
 }
 
+function same(a, b) {
+  return JSON.stringify(a) === JSON.stringify(b);
+}
+
 // Fire one shot to start the wall, then leave the board alone until the run
 // ends. Every clear from then on would be the wall's own doing.
 async function idleUntilGameOver(page, maxFrames) {
@@ -58,6 +62,43 @@ async function idleUntilGameOver(page, maxFrames) {
     `idle board moved on by itself: level ${before.level} -> ${after.level}, score ${before.score} -> ${after.score} in ${secs} s`);
   check(after.gameOver, `no game over after ${secs} s idle`);
   return `level ${after.level}, score ${after.score} for ${secs} s until the wall reached the front`;
+}
+
+// Start today's Daily, then play `shots` ({ at, col }, `at` in frames from
+// the start) until frame `until`. Returns the hand after every shot, the far
+// row after every wall advance, and the board at the end. A shot marked
+// `alone` must land with no neighbour of its own colour, so that it cannot
+// take part in a match or in how a wall row fits the board.
+async function playDaily(page, shots, until) {
+  await page.evaluate(() => window.__replay.run(1, [{ f: window.__replay.frame, click: '#daily-btn' }]));
+  return page.evaluate(([list, end]) => {
+    const h = window.__hs;
+    const rp = window.__replay;
+    const f0 = rp.frame;
+    const hands = [];
+    const walls = [];
+    const problems = [];
+    while (rp.frame < f0 + end) {
+      const shot = list.find((s) => s.at === rp.frame - f0);
+      const timer = h.wall.timer;
+      if (shot) {
+        h.setCur({ col: shot.col });
+        const row = h.landingRow(shot.col);
+        const color = h.cur.color;
+        const grid = h.grid;
+        const touching = [[shot.col - 1, row], [shot.col + 1, row], [shot.col, row + 1]]
+          .some(([c, r]) => grid[c]?.[r] === color);
+        if (shot.alone && (row > 10 || touching)) problems.push(`shot at ${shot.at} into lane ${shot.col} is not alone`);
+        rp.run(1, [{ f: rp.frame, key: 'Space' }]);
+        const { color: cur, next } = h.cur;
+        hands.push([cur, ...next]);
+      } else {
+        rp.run(1);
+      }
+      if (h.wall.timer < timer) walls.push(h.grid.map((lane) => lane[lane.length - 1]));
+    }
+    return { hands, walls, grid: h.grid, score: h.score, level: h.level, problems };
+  }, [shots, until]);
 }
 
 // ─── Checks ──────────────────────────────────────────────────────────────────
@@ -136,6 +177,36 @@ const CHECKS = [
       return `wall waited for a ${flight}-frame shot and its cascade, ${r.advanced - r.fired} frames; level 2`;
     },
   },
+  {
+    // Bug 3: the queue and the wall rows shared one RNG, so a shot fired a
+    // little sooner or later changed both from then on. Two runs of the
+    // same Daily fire the same three shots into the same lanes; only the
+    // third moves, from before the first wall advance to after it. Both
+    // must deal the same hand after every shot, bring the same wall rows
+    // and end on the same board.
+    name: 'daily-shot-timing',
+    async run(page, browser, baseUrl, errors) {
+      // 2026-10-20 deals 1, 1, 0, 2, ... and seeds colour 1 into lanes 2
+      // and 4. The 1s go to the empty edge lanes; the 0 lands on lane 2's
+      // seed, next to nothing of its own colour either way.
+      const early = [{ at: 10, col: 0 }, { at: 60, col: 6 }, { at: 300, col: 2, alone: true }];
+      const late = [{ at: 10, col: 0 }, { at: 60, col: 6 }, { at: 700, col: 2, alone: true }];
+      const until = 1900; // three wall advances
+      const a = await playDaily(page, early, until);
+      const other = await openGame(browser, baseUrl, errors);
+      await step(other.page, 2);
+      const b = await playDaily(other.page, late, until);
+
+      check(!a.problems.length && !b.problems.length, [...a.problems, ...b.problems].join('; '));
+      check(a.walls.length === 3 && b.walls.length === 3, `wall advances: ${a.walls.length} and ${b.walls.length}, expected 3`);
+      const diffs = [];
+      if (!same(a.hands, b.hands)) diffs.push(`hands: early ${JSON.stringify(a.hands)}, late ${JSON.stringify(b.hands)}`);
+      if (!same(a.walls, b.walls)) diffs.push(`wall rows: early ${JSON.stringify(a.walls)}, late ${JSON.stringify(b.walls)}`);
+      if (!same(a.grid, b.grid) || a.score !== b.score) diffs.push('final boards');
+      check(!diffs.length, `the two timings differ in ${diffs.join('; ')}`);
+      return `third shot at frame 300 or 700: same ${a.hands.length} hands, same ${a.walls.length} wall rows, same board`;
+    },
+  },
 ];
 
 // ─── Runner ──────────────────────────────────────────────────────────────────
@@ -156,7 +227,7 @@ async function main() {
       const { page } = await openGame(browser, harness.baseUrl, errors);
       try {
         await step(page, 2);
-        const note = await c.run(page);
+        const note = await c.run(page, browser, harness.baseUrl, errors);
         if (errors.length > errorsBefore) throw new Error(errors[errorsBefore]);
         console.log(`ok   ${c.name}  ${((Date.now() - t0) / 1000).toFixed(1)}s${note ? `  (${note})` : ''}`);
       } catch (err) {
