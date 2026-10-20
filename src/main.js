@@ -1,776 +1,71 @@
-import * as THREE from 'three';
-import { MusicEngine } from './music.js';
+// ─── Hueshot ─────────────────────────────────────────────────────────────────
+// The game flow (shooting, cascades, the wall, levels, game over, restart)
+// and the frame loop. Rules live in game/rules.js, the run's state in
+// game/state.js; render/, audio/, ui/ and input.js are the outputs and
+// inputs around them.
+
 import { THEMES } from './themes.js';
-
-// ─── Constants ───────────────────────────────────────────────────────────────
-const GRID_COLS = 7;
-const GRID_ROWS = 12;
-const CUBE_SIZE = 1;
-const COL_CELL = CUBE_SIZE;
-const DEPTH_CELL = CUBE_SIZE;
-const FIELD_DEPTH = GRID_ROWS * DEPTH_CELL;
-const SHOOT_SPEED = 40;
-// Wall interval decays geometrically instead of linearly: gentle at first,
-// steep in the middle, and it plateaus near the floor instead of hitting a
-// wall of death. See getWallInterval().
-const WALL_ADVANCE_INTERVAL_START = 10;
-const WALL_ADVANCE_INTERVAL_MIN = 2.5;
-const WALL_ADVANCE_DECAY = 0.9;
-// Level 1 is a short on-ramp (first level-up inside ~30s); every level after
-// costs the full ten.
-const CLEARS_FOR_LEVEL_1 = 6;
-const CLEARS_PER_LEVEL = 10;
-const ROW_CLEAR_BONUS = 200;
-const COLORS = [
-  0xff4444, // red
-  0x44bb44, // green
-  0x4488ff, // blue
-  0xffcc00, // yellow
-  0xff66ff, // magenta
-];
-let COLOR_NAMES = COLORS.map((c) => '#' + c.toString(16).padStart(6, '0'));
-
-function refreshColorNames() {
-  COLOR_NAMES = COLORS.map((c) => '#' + c.toString(16).padStart(6, '0'));
-}
-
-// Special cube indices (beyond normal COLORS array)
-const RAINBOW_INDEX = COLORS.length;     // 5
-const BOMB_INDEX = COLORS.length + 1;    // 6
-
-// ─── Audio (Web Audio API — synthesized, no external files) ─────────────────
-const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-
-const music = new MusicEngine(audioCtx);
-
-function ensureAudio() {
-  if (audioCtx.state === 'suspended') audioCtx.resume();
-  music.start();
-}
-
-// Quantize musical SFX to the next 8th note of the soundtrack (the Lumines
-// trick) — clears land ON the beat and the game starts to feel like an
-// instrument. Falls back to "now" before the music has started.
-function qTime() {
-  return music.started ? music.nextGridTime(2) : audioCtx.currentTime;
-}
-window.addEventListener('keydown', ensureAudio, { once: true });
-window.addEventListener('touchstart', ensureAudio, { once: true });
-
-let lastExplosionTime = 0;
-const EXPLOSION_COOLDOWN = 0.04;
-
-// Layered debris explosion: crack transient + broadband body with a darkening
-// filter sweep + sub thump. The filter start point is randomized so repeated
-// explosions never sound identical (a big realism tell).
-function playExplosionSound() {
-  const now = audioCtx.currentTime;
-  if (now - lastExplosionTime < EXPLOSION_COOLDOWN) return;
-  lastExplosionTime = now;
-
-  // Master variation per explosion — repetition is the biggest synth tell
-  const v = 0.8 + Math.random() * 0.3;
-
-  // 1. Crack — a few ms of noise, bandpassed so it snaps without hissing
-  const crackDur = 0.016 + Math.random() * 0.008;
-  const crackSize = Math.ceil(audioCtx.sampleRate * crackDur);
-  const crackBuf = audioCtx.createBuffer(1, crackSize, audioCtx.sampleRate);
-  const cd = crackBuf.getChannelData(0);
-  for (let i = 0; i < crackSize; i++) {
-    cd[i] = (Math.random() * 2 - 1) * Math.exp(-i / (crackSize * 0.18));
-  }
-  const crack = audioCtx.createBufferSource();
-  crack.buffer = crackBuf;
-  const crackBp = audioCtx.createBiquadFilter();
-  crackBp.type = 'bandpass';
-  crackBp.frequency.value = 2400 + Math.random() * 900;
-  crackBp.Q.value = 0.8;
-  const crackGain = audioCtx.createGain();
-  crackGain.gain.setValueAtTime(0.12 * v, now);
-  crack.connect(crackBp).connect(crackGain).connect(audioCtx.destination);
-  crack.start(now);
-  crack.stop(now + crackDur);
-
-  // 2. Body — broadband rumble that darkens as fragments disperse
-  const bodyDur = 0.24 + Math.random() * 0.1;
-  const bodySize = Math.ceil(audioCtx.sampleRate * bodyDur);
-  const bodyBuf = audioCtx.createBuffer(1, bodySize, audioCtx.sampleRate);
-  const bd = bodyBuf.getChannelData(0);
-  for (let i = 0; i < bodySize; i++) {
-    bd[i] = (Math.random() * 2 - 1) * Math.exp(-i / (bodySize * 0.22));
-  }
-  const body = audioCtx.createBufferSource();
-  body.buffer = bodyBuf;
-  const bodyLp = audioCtx.createBiquadFilter();
-  bodyLp.type = 'lowpass';
-  bodyLp.frequency.setValueAtTime(2800 + Math.random() * 1800, now);
-  bodyLp.frequency.exponentialRampToValueAtTime(200, now + bodyDur);
-  bodyLp.Q.value = 0.7;
-  const bodyGain = audioCtx.createGain();
-  bodyGain.gain.setValueAtTime(0.24 * v, now);
-  bodyGain.gain.exponentialRampToValueAtTime(0.001, now + bodyDur);
-  body.connect(bodyLp).connect(bodyGain).connect(audioCtx.destination);
-  body.start(now);
-  body.stop(now + bodyDur);
-
-  // 3. Sub thump — the weight of the impact. Short attack ramp kills the
-  //    click; randomized start pitch keeps repeats from ringing identically
-  const osc = audioCtx.createOscillator();
-  osc.type = 'sine';
-  osc.frequency.setValueAtTime(78 + Math.random() * 22, now);
-  osc.frequency.exponentialRampToValueAtTime(34, now + 0.15);
-  const oscGain = audioCtx.createGain();
-  oscGain.gain.setValueAtTime(0.0001, now);
-  oscGain.gain.linearRampToValueAtTime(0.22 * v, now + 0.004);
-  oscGain.gain.exponentialRampToValueAtTime(0.001, now + 0.17);
-  osc.connect(oscGain).connect(audioCtx.destination);
-  osc.start(now);
-  osc.stop(now + 0.17);
-}
-
-let lastBounceTime = 0;
-const BOUNCE_COOLDOWN = 0.03;
-
-// Debris tick: a filtered-noise TAP, not a tone. Real fragments hitting a
-// floor read as dull clicks that blend into a scatter texture — so soft hits
-// are silent, only some bounces sound at all, and every tick sits at a
-// slightly different pitch. No oscillators = no beeping.
-function playBounceSound(velocity) {
-  const now = audioCtx.currentTime;
-  if (now - lastBounceTime < BOUNCE_COOLDOWN) return;
-
-  const impact = Math.min(1, Math.abs(velocity) / 6);
-  if (impact < 0.12) return; // too soft to hear
-  if (Math.random() < 0.45) return; // gate: scattered ticks, not machine-gun
-  lastBounceTime = now;
-
-  const vol = 0.015 + impact * 0.05;
-  const dur = 0.008 + Math.random() * 0.014;
-
-  const size = Math.ceil(audioCtx.sampleRate * dur);
-  const buf = audioCtx.createBuffer(1, size, audioCtx.sampleRate);
-  const d = buf.getChannelData(0);
-  for (let i = 0; i < size; i++) {
-    d[i] = (Math.random() * 2 - 1) * Math.exp(-i / (size * 0.2));
-  }
-  const src = audioCtx.createBufferSource();
-  src.buffer = buf;
-
-  // Harder impacts are brighter, but everything stays dull and woody
-  const bp = audioCtx.createBiquadFilter();
-  bp.type = 'bandpass';
-  bp.frequency.value = 700 + impact * 1300 + Math.random() * 700;
-  bp.Q.value = 1.1;
-
-  const lp = audioCtx.createBiquadFilter();
-  lp.type = 'lowpass';
-  lp.frequency.value = 3800;
-
-  const g = audioCtx.createGain();
-  g.gain.setValueAtTime(vol, now);
-  g.gain.exponentialRampToValueAtTime(0.001, now + dur);
-
-  src.connect(bp).connect(lp).connect(g).connect(audioCtx.destination);
-  src.start(now);
-  src.stop(now + dur);
-}
-
-// Level-up: a rising noise swell ("whoosh") under warm, detuned, lowpassed
-// chimes — an achievement swell in the same organic family as the debris
-// sounds, instead of a beepy NES arpeggio.
-function playLevelUpSound() {
-  const now = qTime();
-
-  // Foundation: filtered noise sweeping upward
-  const swellDur = 0.75;
-  const size = Math.ceil(audioCtx.sampleRate * swellDur);
-  const buf = audioCtx.createBuffer(1, size, audioCtx.sampleRate);
-  const d = buf.getChannelData(0);
-  for (let i = 0; i < size; i++) d[i] = Math.random() * 2 - 1;
-  const swell = audioCtx.createBufferSource();
-  swell.buffer = buf;
-  const bp = audioCtx.createBiquadFilter();
-  bp.type = 'bandpass';
-  bp.frequency.setValueAtTime(350, now);
-  bp.frequency.exponentialRampToValueAtTime(2800, now + swellDur * 0.8);
-  bp.Q.value = 1.6;
-  const sg = audioCtx.createGain();
-  sg.gain.setValueAtTime(0.0001, now);
-  sg.gain.linearRampToValueAtTime(0.11, now + swellDur * 0.55);
-  sg.gain.exponentialRampToValueAtTime(0.001, now + swellDur);
-  swell.connect(bp).connect(sg).connect(audioCtx.destination);
-  swell.start(now);
-  swell.stop(now + swellDur);
-
-  // Chimes: detuned triangle pairs through a lowpass, soft attack —
-  // warm and pad-like rather than pure-tone beeps
-  const notes = [523.25, 659.25, 783.99, 1046.5]; // C5 E5 G5 C6
-  notes.forEach((freq, i) => {
-    const t = now + i * 0.09;
-    for (const detune of [-4, 4]) {
-      const o = audioCtx.createOscillator();
-      o.type = 'triangle';
-      o.frequency.value = freq;
-      o.detune.value = detune;
-      const lp = audioCtx.createBiquadFilter();
-      lp.type = 'lowpass';
-      lp.frequency.value = 1600;
-      const g = audioCtx.createGain();
-      g.gain.setValueAtTime(0.0001, t);
-      g.gain.linearRampToValueAtTime(0.07, t + 0.03);
-      g.gain.exponentialRampToValueAtTime(0.001, t + 0.55);
-      o.connect(lp).connect(g).connect(audioCtx.destination);
-      o.start(t);
-      o.stop(t + 0.55);
-    }
-  });
-}
-
-function playBombSound() {
-  const now = audioCtx.currentTime;
-  const duration = 0.4;
-
-  // Heavy low-pass noise
-  const bufferSize = Math.ceil(audioCtx.sampleRate * duration);
-  const buffer = audioCtx.createBuffer(1, bufferSize, audioCtx.sampleRate);
-  const data = buffer.getChannelData(0);
-  for (let i = 0; i < bufferSize; i++) {
-    data[i] = (Math.random() * 2 - 1) * Math.exp(-i / (bufferSize * 0.2));
-  }
-  const noise = audioCtx.createBufferSource();
-  noise.buffer = buffer;
-  const lp = audioCtx.createBiquadFilter();
-  lp.type = 'lowpass';
-  lp.frequency.setValueAtTime(600, now);
-  lp.frequency.exponentialRampToValueAtTime(100, now + duration);
-  const gain = audioCtx.createGain();
-  gain.gain.setValueAtTime(0.5, now);
-  gain.gain.exponentialRampToValueAtTime(0.001, now + duration);
-  noise.connect(lp).connect(gain).connect(audioCtx.destination);
-  noise.start(now);
-  noise.stop(now + duration);
-
-  // Deep bass thud
-  const osc = audioCtx.createOscillator();
-  osc.type = 'sine';
-  osc.frequency.setValueAtTime(80, now);
-  osc.frequency.exponentialRampToValueAtTime(20, now + 0.3);
-  const oscGain = audioCtx.createGain();
-  oscGain.gain.setValueAtTime(0.5, now);
-  oscGain.gain.exponentialRampToValueAtTime(0.001, now + 0.3);
-  osc.connect(oscGain).connect(audioCtx.destination);
-  osc.start(now);
-  osc.stop(now + 0.3);
-}
-
-function playRowClearSound() {
-  const now = qTime();
-  const osc = audioCtx.createOscillator();
-  osc.type = 'sawtooth';
-  osc.frequency.setValueAtTime(200, now);
-  osc.frequency.exponentialRampToValueAtTime(2000, now + 0.3);
-  const lp = audioCtx.createBiquadFilter();
-  lp.type = 'lowpass';
-  lp.frequency.setValueAtTime(3000, now);
-  lp.frequency.exponentialRampToValueAtTime(500, now + 0.3);
-  const gain = audioCtx.createGain();
-  gain.gain.setValueAtTime(0.15, now);
-  gain.gain.exponentialRampToValueAtTime(0.001, now + 0.3);
-  osc.connect(lp).connect(gain).connect(audioCtx.destination);
-  osc.start(now);
-  osc.stop(now + 0.3);
-}
-
-// Low thump played on the beat while in danger — synced via music.onBeat
-function playHeartbeat(time) {
-  const o = audioCtx.createOscillator();
-  o.type = 'sine';
-  o.frequency.setValueAtTime(55, time);
-  o.frequency.exponentialRampToValueAtTime(35, time + 0.12);
-  const g = audioCtx.createGain();
-  g.gain.setValueAtTime(0.22, time);
-  g.gain.exponentialRampToValueAtTime(0.001, time + 0.18);
-  o.connect(g).connect(audioCtx.destination);
-  o.start(time);
-  o.stop(time + 0.2);
-}
-
-// Weighty thud when a cube lands (immediate — impact must not feel laggy)
-function playLandSound() {
-  const now = audioCtx.currentTime;
-  const o = audioCtx.createOscillator();
-  o.type = 'sine';
-  o.frequency.setValueAtTime(180, now);
-  o.frequency.exponentialRampToValueAtTime(70, now + 0.08);
-  const g = audioCtx.createGain();
-  g.gain.setValueAtTime(0.15, now);
-  g.gain.exponentialRampToValueAtTime(0.001, now + 0.1);
-  o.connect(g).connect(audioCtx.destination);
-  o.start(now);
-  o.stop(now + 0.1);
-}
-
-// Low rumble as the wall grinds forward
-function playWallPushSound() {
-  const now = audioCtx.currentTime;
-  const dur = 0.35;
-  const size = Math.ceil(audioCtx.sampleRate * dur);
-  const buf = audioCtx.createBuffer(1, size, audioCtx.sampleRate);
-  const d = buf.getChannelData(0);
-  for (let i = 0; i < size; i++) {
-    d[i] = (Math.random() * 2 - 1) * (1 - i / size);
-  }
-  const src = audioCtx.createBufferSource();
-  src.buffer = buf;
-  const lp = audioCtx.createBiquadFilter();
-  lp.type = 'lowpass';
-  lp.frequency.setValueAtTime(300, now);
-  lp.frequency.exponentialRampToValueAtTime(90, now + dur);
-  const g = audioCtx.createGain();
-  g.gain.setValueAtTime(0.35, now);
-  g.gain.exponentialRampToValueAtTime(0.001, now + dur);
-  src.connect(lp).connect(g).connect(audioCtx.destination);
-  src.start(now);
-  src.stop(now + dur);
-}
-
-// Triumphant rising arp for clutch saves
-function playClutchSound() {
-  const t0 = qTime();
-  [523, 659, 784, 1047, 1319].forEach((f, i) => {
-    const t = t0 + i * 0.05;
-    const o = audioCtx.createOscillator();
-    o.type = 'triangle';
-    o.frequency.setValueAtTime(f, t);
-    const g = audioCtx.createGain();
-    g.gain.setValueAtTime(0.16, t);
-    g.gain.exponentialRampToValueAtTime(0.001, t + 0.25);
-    o.connect(g).connect(audioCtx.destination);
-    o.start(t);
-    o.stop(t + 0.25);
-  });
-}
-
-// ─── Enhanced chain combo sounds (pitch + harmony escalation) ───────────────
-function playChainSound(chainStep) {
-  const now = qTime();
-  const baseNote = 523; // C5
-  const freq = baseNote * Math.pow(2, (chainStep - 1) * 2 / 12);
-  const vol = Math.min(0.3, 0.15 + chainStep * 0.03);
-  const dur = 0.12 + chainStep * 0.02;
-
-  // Primary tone - escalating pitch
-  const osc = audioCtx.createOscillator();
-  osc.type = 'triangle';
-  osc.frequency.setValueAtTime(freq, now);
-  osc.frequency.exponentialRampToValueAtTime(freq * 1.5, now + dur * 0.3);
-  const g = audioCtx.createGain();
-  g.gain.setValueAtTime(vol, now);
-  g.gain.exponentialRampToValueAtTime(0.001, now + dur);
-  osc.connect(g).connect(audioCtx.destination);
-  osc.start(now);
-  osc.stop(now + dur);
-
-  // Harmony - fifth above at chain >= 2
-  if (chainStep >= 2) {
-    const osc2 = audioCtx.createOscillator();
-    osc2.type = 'sine';
-    osc2.frequency.setValueAtTime(freq * 1.5, now);
-    const g2 = audioCtx.createGain();
-    g2.gain.setValueAtTime(vol * 0.5, now);
-    g2.gain.exponentialRampToValueAtTime(0.001, now + dur * 0.8);
-    osc2.connect(g2).connect(audioCtx.destination);
-    osc2.start(now);
-    osc2.stop(now + dur);
-  }
-
-  // Octave + sparkle at chain >= 3
-  if (chainStep >= 3) {
-    const osc3 = audioCtx.createOscillator();
-    osc3.type = 'sine';
-    osc3.frequency.setValueAtTime(freq * 2, now);
-    osc3.frequency.exponentialRampToValueAtTime(freq * 2.5, now + dur * 0.5);
-    const g3 = audioCtx.createGain();
-    g3.gain.setValueAtTime(vol * 0.3, now);
-    g3.gain.exponentialRampToValueAtTime(0.001, now + dur);
-    osc3.connect(g3).connect(audioCtx.destination);
-    osc3.start(now);
-    osc3.stop(now + dur);
-  }
-
-  // Deep resonance at chain >= 4
-  if (chainStep >= 4) {
-    const osc4 = audioCtx.createOscillator();
-    osc4.type = 'sine';
-    osc4.frequency.setValueAtTime(freq * 0.5, now);
-    const g4 = audioCtx.createGain();
-    g4.gain.setValueAtTime(vol * 0.4, now);
-    g4.gain.exponentialRampToValueAtTime(0.001, now + dur * 1.2);
-    osc4.connect(g4).connect(audioCtx.destination);
-    osc4.start(now);
-    osc4.stop(now + dur * 1.2);
-  }
-}
-
-// ─── State ───────────────────────────────────────────────────────────────────
-// Progression (must be before randomColorIndex calls)
-let level = 1;
-let totalClearedCount = 0;
-let highScore = parseInt(localStorage.getItem('hueshot-best') || '0', 10);
-
-// Swappable RNG — Math.random normally, a date-seeded PRNG for Daily runs
-let rng = Math.random;
-let dailyMode = false;
-
-// Bag-based color dealing: 2 of each active color per
-// bag, shuffled. Kills droughts/floods so the game feels fair.
-let colorBag = [];
-let bagColorCount = 0;
-
-let grid = [];
-let currentCol = Math.floor(GRID_COLS / 2);
-let currentColorIndex = randomColorIndex();
-let nextQueue = [randomColorIndex(), randomColorIndex(), randomColorIndex()];
-let heldColorIndex = null;
-let holdUsedThisTurn = false;
-let shootingCube = null;
-let shootingVelocity = null;
-let score = 0;
-let gameOver = false;
-let paused = false;
-let particles = [];
-let wallAdvanceTimer = 0;
-// The wall doesn't start closing in until the player fires their first
-// shot -- a board that starts advancing before you've touched it teaches
-// the wrong lesson in the first second.
-let wallStarted = false;
-
-// Juice state
-let shakeTimer = 0;
-let shakeIntensity = 0;
-let freezeTimer = 0;
-
-// Rainbow animation timer
-let rainbowTime = 0;
-
-// Dynamic intensity state
-let intensityLevel = 0; // 0-1 scale based on recent activity
-let lastChainStep = 0;
-let flashTimer = 0;
-let flashColor = 0xffffff;
-
-// Shooting trail particles
-let trailParticles = [];
-
-// Danger / clutch state
-let dangerActive = false;
-let slowMoTimer = 0;
-
-// Cube animation state (landing squash, wall-push tweens)
-let landingAnims = [];
-let wallAnims = [];
-
-// Run stats (per run) + lifetime stats. Badges and Zone were cut in the App
-// Store rework: a hidden "save me" power-up and eight toasts with no screen
-// to view them added a system without adding a reason to come back.
-let runStats = { bestChain: 0, cleared: 0, clutches: 0 };
-let lifeStats = JSON.parse(
-  localStorage.getItem('hueshot-stats')
-  || '{"cleared":0,"bestChain":0,"games":0}'
-);
-
-// ─── DOM refs ────────────────────────────────────────────────────────────────
-const scoreEl = document.getElementById('score-val');
-const bestEl = document.getElementById('best-val');
-const levelEl = document.getElementById('level-val');
-const finalScoreEl = document.getElementById('final-score');
-const finalBestEl = document.getElementById('final-best');
-const newBestEl = document.getElementById('new-best');
-const gameOverScreen = document.getElementById('game-over-screen');
-const restartBtn = document.getElementById('restart-btn');
-const qSlot0 = document.getElementById('q-slot-0');
-const qSlot1 = document.getElementById('q-slot-1');
-const qSlot2 = document.getElementById('q-slot-2');
-const holdBoxEl = document.getElementById('hold-preview');
-const clutchEl = document.getElementById('clutch-banner');
-const runStatsEl = document.getElementById('run-stats');
-const dailyResultEl = document.getElementById('daily-result');
-const dailyBtn = document.getElementById('daily-btn');
-const dailyIndicatorEl = document.getElementById('daily-indicator');
-const wallWarningEl = document.getElementById('wall-warning');
-const levelUpEl = document.getElementById('level-up');
-const rowClearEl = document.getElementById('row-clear');
-const uiEl = document.getElementById('ui');
-const wallTimerEl = document.getElementById('wall-timer');
-const wallTimerFillEl = document.getElementById('wall-timer-fill');
-const hintEl = document.getElementById('hint');
-const pauseBtn = document.getElementById('pause-btn');
-const pauseScreen = document.getElementById('pause-screen');
-const resumeBtn = document.getElementById('resume-btn');
-const pauseRestartBtn = document.getElementById('pause-restart-btn');
-const chainCounterEl = document.getElementById('chain-counter');
-const flashOverlayEl = document.getElementById('flash-overlay');
-
-bestEl.textContent = highScore;
-
-// ─── Score popups ─────────────────────────────────────────────────────────────
-function spawnScorePopup(worldX, worldZ, label, extraClass) {
-  const pos = new THREE.Vector3(worldX, 1, worldZ);
-  pos.project(camera);
-  const sx = (pos.x * 0.5 + 0.5) * window.innerWidth;
-  const sy = (-pos.y * 0.5 + 0.5) * window.innerHeight;
-
-  const el = document.createElement('div');
-  el.className = 'score-popup' + (extraClass ? ' ' + extraClass : '');
-  el.textContent = label;
-  el.style.left = `${sx}px`;
-  el.style.top = `${sy}px`;
-  uiEl.appendChild(el);
-  el.addEventListener('animationend', () => el.remove());
-}
-
-// ─── Three.js setup ─────────────────────────────────────────────────────────
-const scene = new THREE.Scene();
-scene.background = new THREE.Color(0x0a0a1a);
-
-const gridWidth = GRID_COLS * COL_CELL;
-const centerX = gridWidth / 2 - COL_CELL / 2;
-
-const camera = new THREE.PerspectiveCamera(
-  60,
-  window.innerWidth / window.innerHeight,
-  0.1,
-  80
-);
-
-// ─── Camera framing ──────────────────────────────────────────────────────────
-// The board must be entirely on screen at every aspect ratio: on a phone in
-// portrait the danger rows are the ones you cannot afford to lose off the
-// bottom edge. So instead of a fixed position, the camera is *fitted* to the
-// board's bounding box — pull back until all eight corners are inside the
-// frustum, with a margin.
-//
-// Portrait wants a steep pitch (the board is 7 wide by 12 deep, which maps
-// naturally onto a tall screen) and a wide vertical FOV so the fit distance
-// stays close enough to keep real perspective. Landscape can sit lower and
-// keep more of the original corridor look.
-const FIT_MARGIN = 0.06;
-const PORTRAIT = { pitchDeg: 55, fov: 68 };
-const LANDSCAPE = { pitchDeg: 34, fov: 55 };
-
-// World-space bounds of everything that must stay visible: the 7x12 grid plus
-// the spawn cube in front of it, one cube-radius in every direction.
-const BOARD_BOUNDS = {
-  minX: -CUBE_SIZE, maxX: (GRID_COLS - 1) * COL_CELL + CUBE_SIZE,
-  minY: -CUBE_SIZE, maxY: CUBE_SIZE,
-  minZ: -1 - CUBE_SIZE, maxZ: (GRID_ROWS - 1) * DEPTH_CELL + CUBE_SIZE,
-};
-const boardCenterZ = (BOARD_BOUNDS.minZ + BOARD_BOUNDS.maxZ) / 2;
-
-// Where the camera sits when nothing is shaking it, set by fitCamera().
-const camBase = new THREE.Vector3();
-const camLookAt = new THREE.Vector3(centerX, 0, boardCenterZ);
-
-function fitCamera() {
-  const aspect = window.innerWidth / window.innerHeight;
-  const { pitchDeg, fov } = aspect < 1 ? PORTRAIT : LANDSCAPE;
-  const pitch = THREE.MathUtils.degToRad(pitchDeg);
-
-  camera.aspect = aspect;
-  camera.fov = fov;
-
-  const tanV = Math.tan(THREE.MathUtils.degToRad(fov) / 2) * (1 - FIT_MARGIN);
-  const tanH = tanV * aspect;
-
-  // Camera-space basis, with the camera on the near side looking down at the
-  // board: zAxis points from the look-at target back toward the camera.
-  const zAxis = new THREE.Vector3(0, Math.sin(pitch), -Math.cos(pitch));
-  const yAxis = new THREE.Vector3(0, Math.cos(pitch), Math.sin(pitch));
-  const xAxis = new THREE.Vector3(1, 0, 0);
-
-  // For a corner at camera-space (u.x, u.y, u.z), the camera must stand at
-  // distance d along zAxis such that the corner is inside both half-angles:
-  //   |u.x| <= (d - u.z) * tanH   and   |u.y| <= (d - u.z) * tanV
-  let dist = 0;
-  const corner = new THREE.Vector3();
-  for (const x of [BOARD_BOUNDS.minX, BOARD_BOUNDS.maxX]) {
-    for (const y of [BOARD_BOUNDS.minY, BOARD_BOUNDS.maxY]) {
-      for (const z of [BOARD_BOUNDS.minZ, BOARD_BOUNDS.maxZ]) {
-        corner.set(x - centerX, y, z - boardCenterZ);
-        const uz = corner.dot(zAxis);
-        dist = Math.max(
-          dist,
-          uz + Math.abs(corner.dot(xAxis)) / tanH,
-          uz + Math.abs(corner.dot(yAxis)) / tanV
-        );
-      }
-    }
-  }
-
-  camBase.copy(zAxis).multiplyScalar(dist).add(camLookAt);
-  camera.position.copy(camBase);
-  camera.lookAt(camLookAt);
-  camera.updateProjectionMatrix();
-}
-
-const renderer = new THREE.WebGLRenderer({ antialias: true });
-renderer.setSize(window.innerWidth, window.innerHeight);
-renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-renderer.shadowMap.enabled = true;
-renderer.shadowMap.type = THREE.PCFSoftShadowMap;
-document.body.insertBefore(renderer.domElement, document.getElementById('ui'));
-
-// ─── Lighting ────────────────────────────────────────────────────────────────
-const ambientLight = new THREE.AmbientLight(0x8888cc, 0.4);
-scene.add(ambientLight);
-
-const dirLight = new THREE.DirectionalLight(0xffffff, 1.0);
-dirLight.position.set(centerX, 8, -2);
-dirLight.target.position.set(centerX, 0, FIELD_DEPTH / 2);
-scene.add(dirLight);
-scene.add(dirLight.target);
-
-const backLight = new THREE.PointLight(0x4466ff, 0.6, 35);
-backLight.position.set(centerX, 2, FIELD_DEPTH + 2);
-scene.add(backLight);
-
-// ─── Game group ──────────────────────────────────────────────────────────────
-const gameGroup = new THREE.Group();
-scene.add(gameGroup);
-
-// Theme state — material refs so applyTheme can recolor the environment
-let groundMatRef = null;
-let gridCoreMatRef = null;
-let gridFadeMatRef = null;
+import {
+  GRID_COLS, GRID_ROWS, SHOOT_SPEED, ROW_CLEAR_BONUS,
+  activeColorCount, wallInterval, levelForClears, themeIndexForLevel,
+  mulberry32, dailySeed, randomColorIndex, generateWallRow, seedOpeningRows,
+  landingRow, reachedFront, isInDanger, computeRemovalSet, fullRowCount, gravityMoves,
+} from './game/rules.js';
+import { state, serialize, deserialize } from './game/state.js';
+import { todayKey, loadBest, saveBest, loadLifeStats, saveLifeStats, recordDailyScore } from './persistence.js';
+import {
+  music, playLevelUpSound, playBombSound, playRowClearSound, playHeartbeat, playLandSound,
+  playWallPushSound, playClutchSound, playChainSound, playTickSound,
+} from './audio/sfx.js';
+import {
+  DEPTH_CELL, scene, renderer, gameGroup, colToX, rowToZ, disposeMesh,
+  createGroundPlane, createGridVisual, applyEnvironment, setIntensityLighting,
+} from './render/scene.js';
+import { camera, fitCamera, triggerShake, resetShake, updateCamera } from './render/camera.js';
+import { setPalette } from './render/palette.js';
+import {
+  spawnCube, createCubeMesh, updateColumnHighlight, updateGhost, pulseGhost, updateSpawnCube,
+  popSpawnCube, updateSpawnPop, recolorCubes, startSquash, updateLandingAnims, pushWallAnim,
+  cancelWallAnimFor, updateWallAnims, resetCubeAnims, updateSpecialCubeVisuals, sweepStrayCubes,
+} from './render/cubes.js';
+import {
+  spawnParticles, updateParticles, clearDebris, updateTrailParticles, emitShotTrail, clearTrail,
+} from './render/particles.js';
+import {
+  setScore, setBest, setLevel, spawnScorePopup, resetAnnouncer, showChainCounter,
+  showLevelUpBanner, showRowClearBanner, showClutchBanner, triggerFlash, updateFlash, isFlashing,
+  resetFlash, updateNextPreview, updateHoldPreview, showWallTimer, hideWallWarning, resetWallTimer,
+  setDanger, setDailyIndicator, showGameOver, showPause, hideOverlays, updateHint, resetIdle,
+} from './ui/hud.js';
+import { hapticPulse } from './ui/haptics.js';
+import { initInput, resetAim } from './input.js';
+
+// ─── Progress that outlives a run ────────────────────────────────────────────
+let highScore = loadBest();
+const lifeStats = loadLifeStats();
 let currentThemeIndex = -1;
 
-// ─── Coordinate mapping ─────────────────────────────────────────────────────
-function colToX(col) {
-  return col * COL_CELL;
+// Next cube for the hand: from the bag, or a special at higher levels
+function dealColor() {
+  return randomColorIndex(state.bag, state.level, state.rng);
 }
 
-function rowToZ(row) {
-  return row * DEPTH_CELL;
-}
+state.currentColorIndex = dealColor();
+state.nextQueue = [dealColor(), dealColor(), dealColor()];
 
-// ─── Ground plane ────────────────────────────────────────────────────────────
-const EXTRA_COLS = 2;
-const EXTRA_ROWS = 1;
-function createGroundPlane() {
-  const totalWidth = gridWidth + EXTRA_COLS * 2 * COL_CELL + 4;
-  const totalDepth = FIELD_DEPTH + EXTRA_ROWS * DEPTH_CELL + 8;
-  const groundGeo = new THREE.PlaneGeometry(totalWidth, totalDepth);
-  const groundMat = new THREE.MeshLambertMaterial({ color: 0x111122 });
-  groundMatRef = groundMat;
-  const ground = new THREE.Mesh(groundGeo, groundMat);
-  ground.rotation.x = -Math.PI / 2;
-  ground.position.set(centerX, -CUBE_SIZE / 2, (FIELD_DEPTH + EXTRA_ROWS * DEPTH_CELL) / 2 - 1);
-  gameGroup.add(ground);
-}
-
-// ─── Grid visual ─────────────────────────────────────────────────────────────
-function createGridVisual() {
-  const coreMat = new THREE.LineBasicMaterial({ color: 0x5566aa });
-  const fadeMat = new THREE.LineBasicMaterial({ color: 0x334466 });
-  gridCoreMatRef = coreMat;
-  gridFadeMatRef = fadeMat;
-  const floorY = -CUBE_SIZE / 2 + 0.01;
-
-  const farZ = FIELD_DEPTH + EXTRA_ROWS * DEPTH_CELL + 1;
-  const coreLeftX = -COL_CELL / 2;
-  const coreRightX = GRID_COLS * COL_CELL - COL_CELL / 2;
-  const extLeftX = coreLeftX - EXTRA_COLS * COL_CELL;
-  const extRightX = coreRightX + EXTRA_COLS * COL_CELL;
-
-  for (let i = 1; i <= EXTRA_COLS; i++) {
-    const x = coreLeftX - i * COL_CELL;
-    const pts = [new THREE.Vector3(x, floorY, -2), new THREE.Vector3(x, floorY, farZ)];
-    gameGroup.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts), fadeMat));
-  }
-  for (let c = 0; c <= GRID_COLS; c++) {
-    const x = c * COL_CELL - COL_CELL / 2;
-    const pts = [new THREE.Vector3(x, floorY, -2), new THREE.Vector3(x, floorY, farZ)];
-    gameGroup.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts), coreMat));
-  }
-  for (let i = 1; i <= EXTRA_COLS; i++) {
-    const x = coreRightX + i * COL_CELL;
-    const pts = [new THREE.Vector3(x, floorY, -2), new THREE.Vector3(x, floorY, farZ)];
-    gameGroup.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts), fadeMat));
-  }
-
-  const totalRows = GRID_ROWS + EXTRA_ROWS;
-  for (let r = 0; r <= totalRows; r++) {
-    const z = r * DEPTH_CELL - DEPTH_CELL / 2;
-    const mat = r <= GRID_ROWS ? coreMat : fadeMat;
-    const pts = [
-      new THREE.Vector3(extLeftX, floorY, z),
-      new THREE.Vector3(extRightX, floorY, z),
-    ];
-    gameGroup.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts), mat));
-  }
-
-  const wallMat = coreMat; // side walls share the theme's core grid color
-  const wallHeight = CUBE_SIZE * 2;
-
-  [coreLeftX, coreRightX].forEach((x) => {
-    for (let r = 0; r <= GRID_ROWS; r += 2) {
-      const z = r * DEPTH_CELL;
-      const pts = [
-        new THREE.Vector3(x, floorY, z),
-        new THREE.Vector3(x, floorY + wallHeight, z),
-      ];
-      gameGroup.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts), wallMat));
-    }
-    const topPts = [
-      new THREE.Vector3(x, floorY + wallHeight, -2),
-      new THREE.Vector3(x, floorY + wallHeight, FIELD_DEPTH + 1),
-    ];
-    gameGroup.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(topPts), wallMat));
-  });
-
-  const wallIndicatorMat = new THREE.LineBasicMaterial({ color: 0xff2222 });
-  const wallZ = (GRID_ROWS - 1) * DEPTH_CELL + DEPTH_CELL / 2;
-  const wallPts = [
-    new THREE.Vector3(coreLeftX, floorY, wallZ),
-    new THREE.Vector3(coreRightX, floorY, wallZ),
-  ];
-  gameGroup.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(wallPts), wallIndicatorMat));
-
-  const wallVertPts = [
-    new THREE.Vector3(coreLeftX, floorY, wallZ),
-    new THREE.Vector3(coreLeftX, floorY + wallHeight, wallZ),
-    new THREE.Vector3(coreRightX, floorY + wallHeight, wallZ),
-    new THREE.Vector3(coreRightX, floorY, wallZ),
-  ];
-  gameGroup.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(wallVertPts), wallIndicatorMat));
-}
+setBest(highScore);
 
 // ─── Theme application (Lumines-style skins, rotate every 3 levels) ──────────
 function applyTheme(idx) {
   const theme = THEMES[idx % THEMES.length];
   currentThemeIndex = idx % THEMES.length;
 
-  scene.background.setHex(theme.bg);
-  if (groundMatRef) groundMatRef.color.setHex(theme.ground);
-  if (gridCoreMatRef) gridCoreMatRef.color.setHex(theme.gridCore);
-  if (gridFadeMatRef) gridFadeMatRef.color.setHex(theme.gridFade);
+  applyEnvironment(theme);
 
-  // Swap the cube palette (same 5 hue families, theme-tinted)
-  for (let i = 0; i < COLORS.length; i++) COLORS[i] = theme.palette[i];
-  refreshColorNames();
-
-  // Recolor every existing normal cube on the board
-  for (let c = 0; c < GRID_COLS; c++) {
-    for (let r = 0; r < GRID_ROWS; r++) {
-      const cell = grid[c] && grid[c][r];
-      if (cell && cell.colorIndex < COLORS.length) {
-        cell.mesh.material.color.setHex(COLORS[cell.colorIndex]);
-      }
-    }
-  }
-  if (shootingCube && shootingCube.colorIndex < COLORS.length) {
-    shootingCube.mesh.material.color.setHex(COLORS[shootingCube.colorIndex]);
-  }
+  // Swap the cube palette (same 5 hue families, theme-tinted) and recolor
+  // every existing normal cube on the board
+  setPalette(theme.palette);
+  recolorCubes();
 
   music.setTheme(theme.music);
 
@@ -780,214 +75,15 @@ function applyTheme(idx) {
   updateGhost();
 }
 
-// ─── Column highlight ────────────────────────────────────────────────────────
-const highlightGeo = new THREE.PlaneGeometry(CUBE_SIZE, FIELD_DEPTH + 4);
-const highlightMat = new THREE.MeshBasicMaterial({
-  color: 0xffffff,
-  transparent: true,
-  opacity: 0.03,
-});
-const columnHighlight = new THREE.Mesh(highlightGeo, highlightMat);
-columnHighlight.rotation.x = -Math.PI / 2;
-columnHighlight.position.y = -CUBE_SIZE / 2 + 0.02;
-columnHighlight.position.z = FIELD_DEPTH / 2;
-gameGroup.add(columnHighlight);
-
-function updateColumnHighlight() {
-  columnHighlight.position.x = currentCol * COL_CELL;
-}
-
-// ─── Ghost preview (wireframe at landing position) ───────────────────────────
-const ghostGeo = new THREE.BoxGeometry(CUBE_SIZE * 0.98, CUBE_SIZE * 0.98, CUBE_SIZE * 0.98);
-const ghostEdges = new THREE.EdgesGeometry(ghostGeo);
-const ghostMat = new THREE.LineBasicMaterial({
-  color: 0xffffff,
-  transparent: true,
-  opacity: 0.25,
-});
-const ghostCube = new THREE.LineSegments(ghostEdges, ghostMat);
-ghostCube.visible = false;
-gameGroup.add(ghostCube);
-
-function updateGhost() {
-  if (gameOver || paused || shootingCube) {
-    ghostCube.visible = false;
-    return;
-  }
-  const row = landingRow(currentCol);
-  if (row < 0) {
-    ghostCube.visible = false;
-    return;
-  }
-  ghostCube.position.set(colToX(currentCol), 0, rowToZ(row));
-  if (currentColorIndex === RAINBOW_INDEX) {
-    ghostMat.color.setHex(0xffffff);
-  } else if (currentColorIndex === BOMB_INDEX) {
-    ghostMat.color.setHex(0xff8800);
-  } else {
-    ghostMat.color.setHex(COLORS[currentColorIndex]);
-  }
-  ghostCube.visible = true;
-}
-
-// ─── Spawn-point cube ────────────────────────────────────────────────────────
-const spawnGeo = new THREE.BoxGeometry(CUBE_SIZE, CUBE_SIZE, CUBE_SIZE);
-const spawnMat = new THREE.MeshLambertMaterial({ color: COLORS[0] });
-const spawnCube = new THREE.Mesh(spawnGeo, spawnMat);
-spawnCube.position.set(currentCol * COL_CELL, 0, -1);
-gameGroup.add(spawnCube);
-
-function updateSpawnCube() {
-  spawnCube.position.x = currentCol * COL_CELL;
-  if (currentColorIndex === RAINBOW_INDEX) {
-    spawnMat.color.setHex(0xffffff);
-    spawnMat.emissive.setHex(0x333333);
-  } else if (currentColorIndex === BOMB_INDEX) {
-    spawnMat.color.setHex(0xff6600);
-    spawnMat.emissive.setHex(0x221100);
-  } else {
-    spawnMat.color.setHex(COLORS[currentColorIndex]);
-    spawnMat.emissive.setHex(0x000000);
-  }
-}
-
-// ─── Helpers ─────────────────────────────────────────────────────────────────
-function getActiveColorCount() {
-  // Two step-ups (3 colours, then 4, then 5) instead of three, each one a
-  // deliberate difficulty spike rather than smoothed-out ramp.
-  if (level >= 6) return 5;
-  if (level >= 3) return 4;
-  return 3;
-}
-
-function getWallInterval() {
-  // Geometric decay: gentle at first, steepest in the middle, and it settles
-  // near the floor instead of a linear ramp that eventually walls off a
-  // player who was keeping pace one level earlier.
-  return Math.max(
-    WALL_ADVANCE_INTERVAL_MIN,
-    WALL_ADVANCE_INTERVAL_START * Math.pow(WALL_ADVANCE_DECAY, level - 1)
-  );
-}
-
-// Cumulative clears -> level. Level 1 is a short on-ramp; every level after
-// costs the same as the last.
-function levelForClears(totalCleared) {
-  if (totalCleared < CLEARS_FOR_LEVEL_1) return 1;
-  return 2 + Math.floor((totalCleared - CLEARS_FOR_LEVEL_1) / CLEARS_PER_LEVEL);
-}
-
-// ─── Seeded RNG (Daily runs) ─────────────────────────────────────────────────
-function hashString(s) {
-  let h = 2166136261;
-  for (let i = 0; i < s.length; i++) {
-    h ^= s.charCodeAt(i);
-    h = Math.imul(h, 16777619);
-  }
-  return h >>> 0;
-}
-
-function mulberry32(seed) {
-  let a = seed >>> 0;
-  return function () {
-    a |= 0;
-    a = (a + 0x6d2b79f5) | 0;
-    let t = Math.imul(a ^ (a >>> 15), 1 | a);
-    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
-}
-
-function todayKey() {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-}
-
-// ─── Bag-based color dealing ─────────────────────────────────────────────────
-function drawColorFromBag() {
-  const n = getActiveColorCount();
-  if (bagColorCount !== n) {
-    colorBag = [];
-    bagColorCount = n;
-  }
-  if (colorBag.length === 0) {
-    for (let i = 0; i < n; i++) colorBag.push(i, i);
-    for (let i = colorBag.length - 1; i > 0; i--) {
-      const j = Math.floor(rng() * (i + 1));
-      [colorBag[i], colorBag[j]] = [colorBag[j], colorBag[i]];
-    }
-  }
-  return colorBag.pop();
-}
-
-function randomColorIndex() {
-  // Special cubes at higher levels
-  if (level >= 7 && rng() < 0.04) return BOMB_INDEX;
-  if (level >= 4 && rng() < 0.05) return RAINBOW_INDEX;
-  return drawColorFromBag();
-}
-
-// A wall row that arrives with a free match already built in isn't a threat,
-// it's a gift the player didn't earn — so no three consecutive columns share
-// a colour. Not bag-dealt: unlike the player's queue, walls should still
-// feel wild column-to-column, just never a freebie.
-function generateWallRow(rngFn) {
-  const n = getActiveColorCount();
-  const row = [];
-  for (let c = 0; c < GRID_COLS; c++) {
-    let color;
-    let tries = 0;
-    do {
-      color = Math.floor(rngFn() * n);
-      tries++;
-    } while (
-      tries < 20
-      && row.length >= 2
-      && row[row.length - 1] === color
-      && row[row.length - 2] === color
-    );
-    row.push(color);
-  }
-  return row;
-}
-
-function createCubeMesh(colorIndex) {
-  const geo = new THREE.BoxGeometry(CUBE_SIZE, CUBE_SIZE, CUBE_SIZE);
-  if (colorIndex === RAINBOW_INDEX) {
-    const mat = new THREE.MeshLambertMaterial({ color: 0xffffff, emissive: 0x333333 });
-    return new THREE.Mesh(geo, mat);
-  }
-  if (colorIndex === BOMB_INDEX) {
-    const mat = new THREE.MeshLambertMaterial({ color: 0xff6600, emissive: 0x331100 });
-    return new THREE.Mesh(geo, mat);
-  }
-  const mat = new THREE.MeshLambertMaterial({ color: COLORS[colorIndex] });
-  return new THREE.Mesh(geo, mat);
-}
-
-// ─── Grid logic ──────────────────────────────────────────────────────────────
+// ─── Grid ────────────────────────────────────────────────────────────────────
 function initGrid() {
-  grid = [];
+  state.grid = [];
   for (let c = 0; c < GRID_COLS; c++) {
-    grid[c] = [];
+    state.grid[c] = [];
     for (let r = 0; r < GRID_ROWS; r++) {
-      grid[c][r] = null;
+      state.grid[c][r] = null;
     }
   }
-}
-
-// The board used to start empty: nothing arrived until the wall's first
-// advance, and the 2-per-colour bag meant a first match usually needed 4-6
-// shots. Instead, seed two cubes of the colour the player is about to fire,
-// one lane apart, at the far row. Whichever lane they aim first or second,
-// the gap between the seeds completes a match on contact -- a guaranteed
-// clear inside the first two shots, no matter how the bag shuffled.
-function seedOpeningRows() {
-  const seedColor = currentColorIndex < COLORS.length ? currentColorIndex : nextQueue[0];
-  const col = 2 + Math.floor(rng() * (GRID_COLS - 4));
-  placeCube(col, GRID_ROWS - 1, seedColor);
-  placeCube(col + 2, GRID_ROWS - 1, seedColor);
-  // col + 1 stays open: a shot there lands between the two seeds and clears.
 }
 
 function placeCube(col, row, colorIndex) {
@@ -995,557 +91,89 @@ function placeCube(col, row, colorIndex) {
   const mesh = createCubeMesh(colorIndex);
   mesh.position.set(colToX(col), 0, rowToZ(row));
   gameGroup.add(mesh);
-  grid[col][row] = { mesh, colorIndex };
-  return grid[col][row];
+  state.grid[col][row] = { mesh, colorIndex };
+  return state.grid[col][row];
 }
 
 function removeCube(col, row) {
-  const cell = grid[col][row];
+  const cell = state.grid[col][row];
   if (!cell) return;
   cancelWallAnimFor(cell.mesh);
-  gameGroup.remove(cell.mesh);
-  cell.mesh.geometry.dispose();
-  cell.mesh.material.dispose();
-  grid[col][row] = null;
+  disposeMesh(cell.mesh);
+  state.grid[col][row] = null;
 }
 
-function landingRow(col) {
-  for (let r = 0; r < GRID_ROWS; r++) {
-    if (grid[col][r]) {
-      return r - 1;
-    }
-  }
-  return GRID_ROWS - 1;
+// A guaranteed first clear, see seedOpeningRows()
+function placeOpeningSeeds() {
+  const seeds = seedOpeningRows(state.rng, state.currentColorIndex, state.nextQueue[0]);
+  for (const { col, row, colorIndex } of seeds) placeCube(col, row, colorIndex);
 }
 
-// ─── Adjacency detection ─────────────────────────────────────────────────────
-function findMatchGroup(col, row) {
-  const cell = grid[col][row];
-  if (!cell) return [];
-
-  // Specials don't participate in color flood-fill
-  if (cell.colorIndex === BOMB_INDEX || cell.colorIndex === RAINBOW_INDEX) return [];
-
-  const targetColor = cell.colorIndex;
-  const visited = new Set();
-  const group = [];
-
-  function flood(c, r) {
-    const key = `${c},${r}`;
-    if (visited.has(key)) return;
-    if (c < 0 || c >= GRID_COLS || r < 0 || r >= GRID_ROWS) return;
-    const cell2 = grid[c][r];
-    if (!cell2) return;
-    // Only match same color; skip specials
-    if (cell2.colorIndex !== targetColor) return;
-
-    visited.add(key);
-    group.push({ col: c, row: r });
-
-    flood(c - 1, r);
-    flood(c + 1, r);
-    flood(c, r - 1);
-    flood(c, r + 1);
-  }
-
-  flood(col, row);
-  return group;
-}
-
-// ─── Particle explosion ─────────────────────────────────────────────────────
-function spawnParticles(col, row, colorIndex) {
-  playExplosionSound();
-  const cx = colToX(col);
-  const cz = rowToZ(row);
-  const floorY = -CUBE_SIZE / 2;
-  // Particle count scales with intensity level
-  const baseCount = colorIndex === BOMB_INDEX ? 8 : 14;
-  const count = Math.round(baseCount * (1 + intensityLevel * 0.5));
-  for (let i = 0; i < count; i++) {
-    let pColor;
-    if (colorIndex === RAINBOW_INDEX) {
-      pColor = COLORS[Math.floor(Math.random() * COLORS.length)];
-    } else if (colorIndex === BOMB_INDEX) {
-      pColor = Math.random() < 0.5 ? 0xff6600 : 0xffcc00;
-    } else {
-      pColor = COLORS[colorIndex];
-    }
-
-    // Power-law size distribution: lots of small shards, occasional big chunk
-    const size = 0.06 + Math.pow(Math.random(), 2.2) * 0.22;
-    // Irregular shard shapes instead of perfect little cubes
-    const geo = new THREE.BoxGeometry(
-      size,
-      size * (0.5 + Math.random() * 0.9),
-      size * (0.5 + Math.random() * 0.9)
-    );
-    // Per-fragment shade variation so the debris doesn't look uniform
-    const shade = new THREE.Color(pColor).multiplyScalar(0.75 + Math.random() * 0.45);
-    const mat = new THREE.MeshLambertMaterial({ color: shade, transparent: true });
-    const mesh = new THREE.Mesh(geo, mat);
-    // Fragments originate throughout the cube's volume, not its center point
-    mesh.position.set(
-      cx + (Math.random() - 0.5) * 0.7,
-      (Math.random() - 0.5) * 0.6,
-      cz + (Math.random() - 0.5) * 0.7
-    );
-    mesh.rotation.set(
-      Math.random() * Math.PI,
-      Math.random() * Math.PI,
-      Math.random() * Math.PI
-    );
-    gameGroup.add(mesh);
-
-    const angle = (Math.PI * 2 * i) / count + Math.random() * 0.5;
-    const speedMult = 1 + intensityLevel * 0.4;
-    const speed = (colorIndex === BOMB_INDEX ? (3.5 + Math.random() * 4) : (2 + Math.random() * 3.5)) * speedMult;
-    // Tumble energy follows launch energy, on all three axes
-    const spin = speed * (0.8 + Math.random() * 1.6);
-    particles.push({
-      mesh,
-      vx: Math.cos(angle) * speed,
-      vy: Math.abs(Math.sin(angle)) * speed * 0.7 + 1.2 + Math.random() * 1.8 + (colorIndex === BOMB_INDEX ? 1.5 : 0),
-      vz: Math.sin(angle) * speed * 0.5,
-      life: 1.2 + Math.random() * 0.6,
-      floorY: floorY + size / 2,
-      bounceDamping: 0.35 + Math.random() * 0.2,
-      spinX: (Math.random() - 0.5) * spin,
-      spinY: (Math.random() - 0.5) * spin,
-      spinZ: (Math.random() - 0.5) * spin,
-      settled: false,
-    });
-  }
-}
-
-function updateParticles(dt) {
-  for (let i = particles.length - 1; i >= 0; i--) {
-    const p = particles[i];
-    p.mesh.position.x += p.vx * dt;
-    p.mesh.position.y += p.vy * dt;
-    p.mesh.position.z += p.vz * dt;
-    p.vy -= 12 * dt;
-
-    if (p.mesh.position.y <= p.floorY && p.vy < 0) {
-      playBounceSound(p.vy);
-      p.mesh.position.y = p.floorY;
-      if (Math.abs(p.vy) < 1.0) {
-        // Fragment has come to rest: no more bouncing or tumbling
-        p.settled = true;
-        p.vy = 0;
-      } else {
-        p.vy = -p.vy * p.bounceDamping;
-        // Each bounce bleeds energy from spin and slide
-        p.spinX *= 0.5;
-        p.spinY *= 0.5;
-        p.spinZ *= 0.5;
-        p.vx *= 0.75;
-        p.vz *= 0.75;
-      }
-    }
-
-    if (p.settled) {
-      // Ground friction slides fragments to a stop — resting debris
-      // that keeps spinning is an instant fake-tell
-      const friction = Math.pow(0.02, dt);
-      p.vx *= friction;
-      p.vz *= friction;
-    } else {
-      p.mesh.rotation.x += p.spinX * dt;
-      p.mesh.rotation.y += p.spinY * dt;
-      p.mesh.rotation.z += p.spinZ * dt;
-    }
-
-    p.life -= dt;
-    // Debris keeps its size and fades out (sinking into the floor when at
-    // rest) instead of shrinking — shrinking reads as cartoon
-    const fadeStart = 0.35;
-    if (p.life < fadeStart) {
-      p.mesh.material.opacity = Math.max(0, p.life / fadeStart);
-      if (p.settled) p.mesh.position.y -= dt * 0.3;
-    }
-
-    if (p.life <= 0) {
-      gameGroup.remove(p.mesh);
-      p.mesh.geometry.dispose();
-      p.mesh.material.dispose();
-      particles.splice(i, 1);
-    }
-  }
-}
-
-// ─── Screen shake + hit-freeze ───────────────────────────────────────────────
-function triggerShake(intensity, duration) {
-  shakeIntensity = Math.max(shakeIntensity, intensity);
-  shakeTimer = Math.max(shakeTimer, duration);
-}
-
+// ─── Juice ───────────────────────────────────────────────────────────────────
+// Hit-freeze: pause game updates briefly on big clears
 function triggerFreeze(duration) {
-  freezeTimer = Math.max(freezeTimer, duration);
+  state.freezeTimer = Math.max(state.freezeTimer, duration);
 }
 
-// ─── Flash overlay (screen flash on big clears) ─────────────────────────────
-function triggerFlash(color, intensity) {
-  flashOverlayEl.style.background = '#' + color.toString(16).padStart(6, '0');
-  flashOverlayEl.style.opacity = intensity;
-  flashTimer = 0.15;
-}
-
-// ─── Danger state + clutch saves ────────────────────────────────────────────
 // Danger = any cube within 2 rows of the front. Clearing your way out of
 // danger is a "clutch" — slow-mo celebration + bonus. These near-death saves
 // are the moments players remember and talk about.
-function isInDanger() {
-  for (let c = 0; c < GRID_COLS; c++) {
-    if (grid[c] && (grid[c][1] || grid[c][2])) return true;
-  }
-  return false;
-}
-
 function triggerClutch() {
-  slowMoTimer = 0.7;
+  state.slowMoTimer = 0.7;
   const bonus = 150;
   addPoints(bonus);
-  runStats.clutches++;
+  state.runStats.clutches++;
 
   playClutchSound();
   triggerFlash(0x66ffe0, 0.2);
   triggerShake(0.18, 0.3);
   hapticPulse(40);
-
-  announce(() => {
-    clutchEl.textContent = `CLUTCH! +${bonus}`;
-    clutchEl.style.display = 'block';
-    clutchEl.style.animation = 'none';
-    void clutchEl.offsetWidth;
-    clutchEl.style.animation = 'rowclear 1.1s ease-out forwards';
-    clutchEl.addEventListener('animationend', () => {
-      clutchEl.style.display = 'none';
-    }, { once: true });
-  }, 1100, true);
+  showClutchBanner(bonus);
 }
 
-// ─── Lifetime stats ──────────────────────────────────────────────────────────
-function saveLifeStats() {
-  localStorage.setItem('hueshot-stats', JSON.stringify(lifeStats));
-}
-
-// ─── Chain counter display ──────────────────────────────────────────────────
-function showChainCounter(step) {
-  if (step < 2) return;
-  announce(() => {
-    const labels = ['', '', 'DOUBLE', 'TRIPLE', 'QUAD', 'PENTA', 'HEXA', 'MEGA', 'ULTRA', 'INSANE'];
-    const label = step < labels.length ? labels[step] : `${step}x CHAIN`;
-
-    chainCounterEl.textContent = `${label}!`;
-    chainCounterEl.style.display = 'block';
-    chainCounterEl.style.animation = 'none';
-    void chainCounterEl.offsetWidth;
-
-    // Color escalation based on chain step
-    const colors = ['', '', '#ff6ef5', '#ff4444', '#ffcc00', '#44ff88', '#4488ff', '#ffffff'];
-    const color = step < colors.length ? colors[step] : '#ffffff';
-    chainCounterEl.style.color = color;
-    chainCounterEl.style.textShadow = `0 0 20px ${color}, 0 0 40px ${color}`;
-    chainCounterEl.style.fontSize = Math.min(72, 40 + step * 8) + 'px';
-
-    chainCounterEl.style.animation = 'chain-pop 1.2s ease-out forwards';
-    chainCounterEl.addEventListener('animationend', () => {
-      chainCounterEl.style.display = 'none';
-    }, { once: true });
-  }, 1200);
-}
-
-// ─── Shooting trail particles ───────────────────────────────────────────────
-function spawnTrailParticle(x, y, z, color) {
-  const size = 0.06 + Math.random() * 0.08;
-  const geo = new THREE.BoxGeometry(size, size, size);
-  const mat = new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.8 });
-  const mesh = new THREE.Mesh(geo, mat);
-  mesh.position.set(x + (Math.random() - 0.5) * 0.3, y + (Math.random() - 0.5) * 0.3, z);
-  gameGroup.add(mesh);
-  trailParticles.push({
-    mesh,
-    life: 0.3 + Math.random() * 0.2,
-    maxLife: 0.3 + Math.random() * 0.2,
-    vy: (Math.random() - 0.5) * 0.5,
-    vx: (Math.random() - 0.5) * 0.5,
-  });
-}
-
-function updateTrailParticles(dt) {
-  for (let i = trailParticles.length - 1; i >= 0; i--) {
-    const p = trailParticles[i];
-    p.life -= dt;
-    p.mesh.position.x += p.vx * dt;
-    p.mesh.position.y += p.vy * dt;
-    const alpha = Math.max(0, p.life / p.maxLife);
-    p.mesh.material.opacity = alpha * 0.8;
-    p.mesh.scale.setScalar(alpha);
-    if (p.life <= 0) {
-      gameGroup.remove(p.mesh);
-      p.mesh.geometry.dispose();
-      p.mesh.material.dispose();
-      trailParticles.splice(i, 1);
-    }
-  }
-}
-
-// ─── Landing squash & stretch ────────────────────────────────────────────────
-function startSquash(mesh) {
-  landingAnims.push({ mesh, t: 0 });
-}
-
-function updateLandingAnims(dt) {
-  for (let i = landingAnims.length - 1; i >= 0; i--) {
-    const a = landingAnims[i];
-    a.t += dt * 5;
-    if (a.t >= 1) {
-      a.mesh.scale.set(1, 1, 1);
-      landingAnims.splice(i, 1);
-    } else {
-      const s = Math.sin(Math.PI * a.t);
-      a.mesh.scale.set(1 + 0.25 * s, 1 - 0.35 * s, 1 + 0.25 * s);
-    }
-  }
-}
-
-// ─── Mesh-position tween (rows grind forward, cleared columns fall) ─────────
-// One mechanism, two speeds: the wall entering a row is a ~330ms grind
-// (speed 3), a cascade step's gravity is a snappier ~120ms drop (speed
-// CASCADE_FALL_SPEED). Always cancels any tween already running on this
-// mesh first, so gravity landing on a still-sliding wall row (or vice
-// versa) replaces it cleanly instead of the two fighting over one mesh.
-function pushWallAnim(mesh, toZ, speed = 3) {
-  cancelWallAnimFor(mesh);
-  wallAnims.push({ mesh, fromZ: mesh.position.z, toZ, t: 0, speed });
-}
-
-function cancelWallAnimFor(mesh) {
-  for (let i = wallAnims.length - 1; i >= 0; i--) {
-    if (wallAnims[i].mesh === mesh) wallAnims.splice(i, 1);
-  }
-}
-
-function updateWallAnims(dt) {
-  for (let i = wallAnims.length - 1; i >= 0; i--) {
-    const a = wallAnims[i];
-    a.t += dt * a.speed;
-    if (a.t >= 1) {
-      a.mesh.position.z = a.toZ;
-      wallAnims.splice(i, 1);
-    } else {
-      const e = 1 - Math.pow(1 - a.t, 3); // ease-out cubic
-      a.mesh.position.z = a.fromZ + (a.toZ - a.fromZ) * e;
-    }
-  }
-}
-
-// ─── Dynamic intensity ──────────────────────────────────────────────────────
 function updateDynamicIntensity(dt, chainStep) {
   // Intensity spikes on chains, decays over time
   const targetIntensity = Math.min(1, chainStep * 0.25);
-  if (targetIntensity > intensityLevel) {
-    intensityLevel = targetIntensity;
+  if (targetIntensity > state.intensityLevel) {
+    state.intensityLevel = targetIntensity;
   } else {
-    intensityLevel = Math.max(0, intensityLevel - dt * 0.3);
+    state.intensityLevel = Math.max(0, state.intensityLevel - dt * 0.3);
   }
 
-  // Ambient light reacts to intensity
-  ambientLight.intensity = 0.4 + intensityLevel * 0.4;
-
-  // Directional light pulses
-  dirLight.intensity = 1.0 + intensityLevel * 0.5;
-
-  // Back light color shifts toward warm during intensity
-  const r = 0.27 + intensityLevel * 0.5;
-  const g = 0.4 - intensityLevel * 0.2;
-  const b = 1.0 - intensityLevel * 0.4;
-  backLight.color.setRGB(r, g, b);
-
-  // Flash overlay decay
-  if (flashTimer > 0) {
-    flashTimer -= dt;
-    if (flashTimer <= 0) {
-      flashOverlayEl.style.opacity = 0;
-    } else {
-      flashOverlayEl.style.opacity = parseFloat(flashOverlayEl.style.opacity) * 0.85;
-    }
-  }
+  setIntensityLighting(state.intensityLevel);
+  updateFlash(dt);
 
   // Drive the music stems: combos and danger both push the mix harder
-  music.setIntensity(Math.max(intensityLevel, dangerActive ? 0.55 : 0));
+  music.setIntensity(Math.max(state.intensityLevel, state.dangerActive ? 0.55 : 0));
   music.update(dt);
-}
-
-// ─── Announcer queue ─────────────────────────────────────────────────────────
-// Level-up, row-clear, and chain banners used to be five independently
-// timed DOM elements at slightly different screen heights; a fast cascade
-// left two or three visible at once. Now there is one slot: each banner is
-// a queued job with a fixed duration, shown one at a time. Level-up jumps
-// the line since it is the rarest and the one the player most needs to see.
-const announceQueue = [];
-let announceBusy = false;
-
-function announce(showFn, durationMs, priority = false) {
-  if (priority) announceQueue.unshift({ showFn, durationMs });
-  else announceQueue.push({ showFn, durationMs });
-  pumpAnnouncer();
-}
-
-function pumpAnnouncer() {
-  if (announceBusy || announceQueue.length === 0) return;
-  const job = announceQueue.shift();
-  announceBusy = true;
-  job.showFn();
-  setTimeout(() => {
-    announceBusy = false;
-    pumpAnnouncer();
-  }, job.durationMs);
 }
 
 // ─── Level progression ───────────────────────────────────────────────────────
 function checkLevelUp(clearedThisAction) {
-  totalClearedCount += clearedThisAction;
-  const newLevel = levelForClears(totalClearedCount);
-  if (newLevel > level) {
-    level = newLevel;
-    levelEl.textContent = `Level ${level}`;
+  state.totalClearedCount += clearedThisAction;
+  const newLevel = levelForClears(state.totalClearedCount);
+  if (newLevel > state.level) {
+    state.level = newLevel;
+    setLevel(state.level);
 
     // Rotate theme every 3 levels — the level-up becomes an audiovisual reveal
-    const themeIdx = Math.floor((level - 1) / 3) % THEMES.length;
+    const themeIdx = themeIndexForLevel(state.level, THEMES.length);
     const themeChanged = themeIdx !== currentThemeIndex;
     if (themeChanged) applyTheme(themeIdx);
 
     // Tension-release pacing: level-up buys a calm breather before the
     // next wall advance (negative timer = extra time)
-    wallAdvanceTimer = Math.min(wallAdvanceTimer, -4);
+    state.wallAdvanceTimer = Math.min(state.wallAdvanceTimer, -4);
 
     playLevelUpSound();
     triggerShake(0.15, 0.3);
-
-    const bannerLevel = level;
-    announce(() => {
-      levelUpEl.innerHTML = `LEVEL ${bannerLevel}`
-        + (themeChanged
-          ? `<div style="font-size:20px;letter-spacing:6px;margin-top:6px;">${THEMES[themeIdx].name}</div>`
-          : '')
-        + '<div style="font-size:13px;opacity:0.65;margin-top:4px;">WALL STABILIZED</div>';
-      levelUpEl.style.display = 'block';
-      levelUpEl.style.animation = 'none';
-      void levelUpEl.offsetWidth;
-      levelUpEl.style.animation = 'lvlup 1.4s ease-out forwards';
-      levelUpEl.addEventListener('animationend', () => {
-        levelUpEl.style.display = 'none';
-      }, { once: true });
-    }, 1400, true);
+    showLevelUpBanner(state.level, themeChanged ? THEMES[themeIdx].name : null);
   }
-}
-
-// ─── Row clear banner ────────────────────────────────────────────────────────
-function showRowClearBanner(count) {
-  playRowClearSound();
-  announce(() => {
-    rowClearEl.textContent = count > 1
-      ? `${count}x ROW CLEAR! +${count * ROW_CLEAR_BONUS}`
-      : `ROW CLEAR! +${ROW_CLEAR_BONUS}`;
-    rowClearEl.style.display = 'block';
-    rowClearEl.style.animation = 'none';
-    void rowClearEl.offsetWidth;
-    rowClearEl.style.animation = 'rowclear 1s ease-out forwards';
-    rowClearEl.addEventListener('animationend', () => {
-      rowClearEl.style.display = 'none';
-    }, { once: true });
-  }, 1000);
 }
 
 function addPoints(n) {
-  score += n;
-  scoreEl.textContent = score;
-}
-
-// ─── Removal detection (one cascade step) ────────────────────────────────────
-// Pure read of the current grid: rainbow cross-clears, flood-filled colour
-// groups of 3+, and any bombs adjacent to what's already being removed
-// (chained up to 10 times so a bomb can trigger a bomb). Returns the set of
-// "col,row" keys to remove this step, plus whether a bomb went off.
-function computeRemovalSet() {
-  const toRemove = new Set();
-
-  for (let c = 0; c < GRID_COLS; c++) {
-    for (let r = 0; r < GRID_ROWS; r++) {
-      const cell = grid[c][r];
-      if (cell && cell.colorIndex === RAINBOW_INDEX) {
-        toRemove.add(`${c},${r}`);
-        [[c - 1, r], [c + 1, r], [c, r - 1], [c, r + 1]].forEach(([nc, nr]) => {
-          if (nc >= 0 && nc < GRID_COLS && nr >= 0 && nr < GRID_ROWS && grid[nc][nr]) {
-            toRemove.add(`${nc},${nr}`);
-          }
-        });
-      }
-    }
-  }
-
-  for (let c = 0; c < GRID_COLS; c++) {
-    for (let r = 0; r < GRID_ROWS; r++) {
-      if (!grid[c][r]) continue;
-      const group = findMatchGroup(c, r);
-      if (group.length >= 3) {
-        group.forEach((g) => toRemove.add(`${g.col},${g.row}`));
-      }
-    }
-  }
-
-  let anyBombsDetonated = false;
-  if (toRemove.size > 0) {
-    for (let iter = 0; iter < 10; iter++) {
-      const bombKeys = [];
-      for (let c = 0; c < GRID_COLS; c++) {
-        for (let r = 0; r < GRID_ROWS; r++) {
-          const cell = grid[c][r];
-          if (!cell || cell.colorIndex !== BOMB_INDEX) continue;
-          if (toRemove.has(`${c},${r}`)) continue;
-          const adj = [[c - 1, r], [c + 1, r], [c, r - 1], [c, r + 1]];
-          const triggered = adj.some(([ac, ar]) => toRemove.has(`${ac},${ar}`));
-          if (triggered) bombKeys.push([c, r]);
-        }
-      }
-      if (bombKeys.length === 0) break;
-      anyBombsDetonated = true;
-      bombKeys.forEach(([bc, br]) => {
-        for (let dc = -1; dc <= 1; dc++) {
-          for (let dr = -1; dr <= 1; dr++) {
-            const nc = bc + dc, nr = br + dr;
-            if (nc >= 0 && nc < GRID_COLS && nr >= 0 && nr < GRID_ROWS && grid[nc][nr]) {
-              toRemove.add(`${nc},${nr}`);
-            }
-          }
-        }
-      });
-    }
-  }
-
-  return { toRemove, anyBombsDetonated };
-}
-
-// Gravity, but tweened instead of teleported: grid state (the source of
-// truth for matching) updates immediately, the mesh position eases into
-// place over `speed`-controlled seconds. Reuses the wall-push tween array —
-// same mechanism, just faster — so a mesh mid-fall never fights a mesh
-// mid-wall-push (cancelWallAnimFor already guards exactly that overlap).
-function applyGravityTweened(speed) {
-  for (let c = 0; c < GRID_COLS; c++) {
-    let writeRow = GRID_ROWS - 1;
-    for (let r = GRID_ROWS - 1; r >= 0; r--) {
-      if (grid[c][r]) {
-        if (r !== writeRow) {
-          grid[c][writeRow] = grid[c][r];
-          grid[c][r] = null;
-          pushWallAnim(grid[c][writeRow].mesh, rowToZ(writeRow), speed);
-        }
-        writeRow--;
-      }
-    }
-  }
+  state.score += n;
+  setScore(state.score);
 }
 
 // ─── Cascade sequencing ───────────────────────────────────────────────────────
@@ -1559,12 +187,9 @@ function applyGravityTweened(speed) {
 const CASCADE_STEP_SECONDS = 0.18;
 const CASCADE_FALL_SPEED = 1 / 0.12; // 120ms fall, expressed the way pushWallAnim wants it
 
-let cascade = null;
-let cascadeTimer = 0;
-
 function beginCascade(onDone) {
-  cascade = {
-    dangerBefore: isInDanger(),
+  state.cascade = {
+    dangerBefore: isInDanger(state.grid),
     totalCleared: 0,
     chainStep: 0,
     totalRowClears: 0,
@@ -1575,7 +200,8 @@ function beginCascade(onDone) {
 }
 
 function runCascadeStep() {
-  const { toRemove, anyBombsDetonated } = computeRemovalSet();
+  const { grid, cascade } = state;
+  const { toRemove, anyBombsDetonated } = computeRemovalSet(grid);
   if (toRemove.size === 0) {
     finishCascade();
     return;
@@ -1584,14 +210,7 @@ function runCascadeStep() {
   cascade.chainStep++;
   if (anyBombsDetonated) cascade.anyBombsDetonated = true;
 
-  let rowClearsThisStep = 0;
-  for (let r = 0; r < GRID_ROWS; r++) {
-    let allCols = true;
-    for (let c = 0; c < GRID_COLS; c++) {
-      if (!toRemove.has(`${c},${r}`)) { allCols = false; break; }
-    }
-    if (allCols) rowClearsThisStep++;
-  }
+  const rowClearsThisStep = fullRowCount(toRemove);
   cascade.totalRowClears += rowClearsThisStep;
 
   let sumX = 0, sumZ = 0, count = 0;
@@ -1629,83 +248,93 @@ function runCascadeStep() {
 
   if (rowClearsThisStep > 0) {
     addPoints(rowClearsThisStep * ROW_CLEAR_BONUS);
+    playRowClearSound();
     showRowClearBanner(rowClearsThisStep);
     triggerShake(0.25, 0.35);
     triggerFreeze(0.1);
   }
 
-  lastChainStep = cascade.chainStep;
+  state.lastChainStep = cascade.chainStep;
   applyGravityTweened(CASCADE_FALL_SPEED);
 
-  cascadeTimer = CASCADE_STEP_SECONDS;
+  state.cascadeTimer = CASCADE_STEP_SECONDS;
+}
+
+// Gravity, but tweened instead of teleported: grid state (the source of
+// truth for matching) updates immediately, the mesh position eases into
+// place over `speed`-controlled seconds. Reuses the wall-push tween array —
+// same mechanism, just faster — so a mesh mid-fall never fights a mesh
+// mid-wall-push (cancelWallAnimFor already guards exactly that overlap).
+function applyGravityTweened(speed) {
+  const { grid } = state;
+  for (const { col, from, to } of gravityMoves(grid)) {
+    grid[col][to] = grid[col][from];
+    grid[col][from] = null;
+    pushWallAnim(grid[col][to].mesh, rowToZ(to), speed);
+  }
 }
 
 function updateCascade(dt) {
-  if (!cascade) return;
-  cascadeTimer -= dt;
-  if (cascadeTimer <= 0) runCascadeStep();
+  if (!state.cascade) return;
+  state.cascadeTimer -= dt;
+  if (state.cascadeTimer <= 0) runCascadeStep();
 }
 
 function finishCascade() {
-  const { totalCleared, chainStep, totalRowClears, anyBombsDetonated, dangerBefore, onDone } = cascade;
-  cascade = null;
+  const { totalCleared, chainStep, totalRowClears, anyBombsDetonated, dangerBefore, onDone } = state.cascade;
+  state.cascade = null;
 
   if (anyBombsDetonated) playBombSound();
 
   if (totalCleared > 0) {
+    const { runStats } = state;
     runStats.cleared += totalCleared;
     lifeStats.cleared = (lifeStats.cleared || 0) + totalCleared;
     if (chainStep > runStats.bestChain) runStats.bestChain = chainStep;
     if (chainStep > (lifeStats.bestChain || 0)) lifeStats.bestChain = chainStep;
-    saveLifeStats();
+    saveLifeStats(lifeStats);
 
     checkLevelUp(totalCleared);
 
-    if (dangerBefore && !isInDanger()) triggerClutch();
+    if (dangerBefore && !isInDanger(state.grid)) triggerClutch();
   }
 
   onDone(totalCleared, chainStep, totalRowClears);
 }
 
 // ─── Shooting ────────────────────────────────────────────────────────────────
-let queuedShot = false;
-
-// The tap that ends a run must not immediately start the next one
-const RETRY_GUARD_MS = 500;
-let gameOverAt = 0;
-
 function shoot() {
-  if (gameOver || paused) return;
+  if (state.gameOver || state.paused) return;
   // Mid-flight input is buffered rather than dropped: at 40 u/s a shot lands
   // in ~300ms, and swallowing a press in that window feels like a missed
   // tap. Also buffered while a cascade is still resolving -- firing a
   // second cube mid-chain would try to start a second cascade on top of
   // the first one and corrupt both.
-  if (shootingCube || cascade) {
-    queuedShot = true;
+  if (state.shootingCube || state.cascade) {
+    state.queuedShot = true;
     return;
   }
 
-  const row = landingRow(currentCol);
+  const row = landingRow(state.grid, state.currentCol);
   if (row < 0) return;
 
-  wallStarted = true;
+  state.wallStarted = true;
 
-  const mesh = createCubeMesh(currentColorIndex);
-  mesh.position.set(colToX(currentCol), 0, spawnCube.position.z);
+  const mesh = createCubeMesh(state.currentColorIndex);
+  mesh.position.set(colToX(state.currentCol), 0, spawnCube.position.z);
   gameGroup.add(mesh);
 
-  shootingCube = {
+  state.shootingCube = {
     mesh,
-    col: currentCol,
+    col: state.currentCol,
     targetRow: row,
-    colorIndex: currentColorIndex,
+    colorIndex: state.currentColorIndex,
   };
-  shootingVelocity = SHOOT_SPEED;
+  state.shootingVelocity = SHOOT_SPEED;
 
-  currentColorIndex = nextQueue.shift();
-  nextQueue.push(randomColorIndex());
-  holdUsedThisTurn = false;
+  state.currentColorIndex = state.nextQueue.shift();
+  state.nextQueue.push(dealColor());
+  state.holdUsedThisTurn = false;
   updateSpawnCube();
   updateNextPreview();
 }
@@ -1713,18 +342,18 @@ function shoot() {
 // ─── Hold / swap ─────────────────────────────────────────────────────────────
 // Bank the current cube for later; once per shot to prevent infinite cycling.
 function holdSwap() {
-  if (gameOver || paused || shootingCube || holdUsedThisTurn) return;
-  if (heldColorIndex === null) {
-    heldColorIndex = currentColorIndex;
-    currentColorIndex = nextQueue.shift();
-    nextQueue.push(randomColorIndex());
+  if (state.gameOver || state.paused || state.shootingCube || state.holdUsedThisTurn) return;
+  if (state.heldColorIndex === null) {
+    state.heldColorIndex = state.currentColorIndex;
+    state.currentColorIndex = state.nextQueue.shift();
+    state.nextQueue.push(dealColor());
   } else {
-    const t = heldColorIndex;
-    heldColorIndex = currentColorIndex;
-    currentColorIndex = t;
+    const t = state.heldColorIndex;
+    state.heldColorIndex = state.currentColorIndex;
+    state.currentColorIndex = t;
   }
-  holdUsedThisTurn = true;
-  spawnScalePop = 1;
+  state.holdUsedThisTurn = true;
+  popSpawnCube();
   playTickSound();
   hapticPulse(15);
   updateSpawnCube();
@@ -1734,42 +363,39 @@ function holdSwap() {
 }
 
 function updateShooting(dt) {
-  if (!shootingCube) return;
+  const shot = state.shootingCube;
+  if (!shot) return;
 
-  const freshRow = landingRow(shootingCube.col);
+  const freshRow = landingRow(state.grid, shot.col);
   if (freshRow < 0) {
-    gameGroup.remove(shootingCube.mesh);
-    shootingCube.mesh.geometry.dispose();
-    shootingCube.mesh.material.dispose();
-    shootingCube = null;
-    shootingVelocity = null;
+    disposeMesh(shot.mesh);
+    state.shootingCube = null;
+    state.shootingVelocity = null;
     checkGameOver();
     return;
   }
-  shootingCube.targetRow = freshRow;
+  shot.targetRow = freshRow;
 
-  const targetZ = rowToZ(shootingCube.targetRow);
-  shootingCube.mesh.position.z += shootingVelocity * dt;
+  const targetZ = rowToZ(shot.targetRow);
+  shot.mesh.position.z += state.shootingVelocity * dt;
 
-  if (shootingCube.mesh.position.z >= targetZ) {
-    shootingCube.mesh.position.z = targetZ;
+  if (shot.mesh.position.z >= targetZ) {
+    shot.mesh.position.z = targetZ;
 
-    gameGroup.remove(shootingCube.mesh);
-    shootingCube.mesh.geometry.dispose();
-    shootingCube.mesh.material.dispose();
+    disposeMesh(shot.mesh);
 
-    const cell = placeCube(shootingCube.col, shootingCube.targetRow, shootingCube.colorIndex);
+    const cell = placeCube(shot.col, shot.targetRow, shot.colorIndex);
     if (cell) startSquash(cell.mesh);
     playLandSound();
 
-    shootingCube = null;
-    shootingVelocity = null;
+    state.shootingCube = null;
+    state.shootingVelocity = null;
 
     beginCascade(() => {
       checkGameOver();
-      if (queuedShot) {
-        queuedShot = false;
-        if (!gameOver) shoot();
+      if (state.queuedShot) {
+        state.queuedShot = false;
+        if (!state.gameOver) shoot();
       }
     });
   }
@@ -1777,17 +403,16 @@ function updateShooting(dt) {
 
 // ─── Wall advancement ────────────────────────────────────────────────────────
 function advanceWall() {
-  for (let c = 0; c < GRID_COLS; c++) {
-    if (grid[c][0]) {
-      triggerGameOver();
-      return;
-    }
+  if (reachedFront(state.grid)) {
+    triggerGameOver();
+    return;
   }
 
   // The wall grinding forward is an EVENT: rumble + shake + tweened motion
   playWallPushSound();
   triggerShake(0.08, 0.3);
 
+  const { grid } = state;
   for (let c = 0; c < GRID_COLS; c++) {
     for (let r = 0; r < GRID_ROWS - 1; r++) {
       grid[c][r] = grid[c][r + 1];
@@ -1798,7 +423,7 @@ function advanceWall() {
     grid[c][GRID_ROWS - 1] = null;
   }
 
-  const wallRow = generateWallRow(rng);
+  const wallRow = generateWallRow(state.rng, activeColorCount(state.level));
   for (let c = 0; c < GRID_COLS; c++) {
     const cell = placeCube(c, GRID_ROWS - 1, wallRow[c]);
     if (cell) {
@@ -1816,167 +441,113 @@ function advanceWall() {
 
 // ─── Game Over ───────────────────────────────────────────────────────────────
 function checkGameOver() {
-  for (let c = 0; c < GRID_COLS; c++) {
-    if (grid[c][0]) {
-      triggerGameOver();
-      return;
-    }
-  }
+  if (reachedFront(state.grid)) triggerGameOver();
 }
 
 function triggerGameOver() {
-  gameOver = true;
-  gameOverAt = performance.now();
-  queuedShot = false;
-  finalScoreEl.textContent = score;
+  const { score, runStats } = state;
+  state.gameOver = true;
+  state.gameOverAt = performance.now();
+  state.queuedShot = false;
 
   const isNewBest = score > highScore;
   if (isNewBest) {
     highScore = score;
-    localStorage.setItem('hueshot-best', String(highScore));
-    bestEl.textContent = highScore;
+    saveBest(highScore);
+    setBest(highScore);
   }
-
-  finalBestEl.textContent = highScore;
-  newBestEl.style.display = isNewBest ? 'block' : 'none';
 
   // Run recap — defeat should still feel like progress
   lifeStats.games = (lifeStats.games || 0) + 1;
-  saveLifeStats();
-  runStatsEl.textContent =
-    `Best chain x${Math.max(1, runStats.bestChain)} • ${runStats.cleared} cubes • Level ${level}`
+  saveLifeStats(lifeStats);
+  const recap = `Best chain x${Math.max(1, runStats.bestChain)} • ${runStats.cleared} cubes • Level ${state.level}`
     + (runStats.clutches ? ` • ${runStats.clutches} clutch` : '');
 
   // Daily challenge result
-  if (dailyMode) {
-    const key = 'hueshot-daily-' + todayKey();
-    const prev = parseInt(localStorage.getItem(key) || '0', 10);
-    if (score > prev) localStorage.setItem(key, String(score));
-    dailyResultEl.textContent = `📅 Daily ${todayKey()} — Best: ${Math.max(prev, score)}`;
-    dailyResultEl.style.display = 'block';
-  } else {
-    dailyResultEl.style.display = 'none';
+  const daily = state.dailyMode
+    ? `📅 Daily ${todayKey()} — Best: ${recordDailyScore(todayKey(), score)}`
+    : null;
+
+  if (state.dangerActive) {
+    state.dangerActive = false;
+    setDanger(false);
   }
 
-  if (dangerActive) {
-    dangerActive = false;
-    document.body.classList.remove('danger');
-  }
+  showGameOver({ score, best: highScore, isNewBest, recap, daily });
+}
 
-  gameOverScreen.style.display = 'flex';
+// Take every cube off the board
+function clearBoard() {
+  for (let c = 0; c < GRID_COLS; c++) {
+    for (let r = 0; r < GRID_ROWS; r++) removeCube(c, r);
+  }
 }
 
 function restartGame(asDaily = false) {
   // Daily runs use a date-seeded PRNG — everyone gets the same board today
-  dailyMode = !!asDaily;
-  rng = dailyMode ? mulberry32(hashString('hueshot-' + todayKey())) : Math.random;
-  colorBag = [];
-  bagColorCount = 0;
-  dailyIndicatorEl.hidden = !dailyMode;
+  state.dailyMode = !!asDaily;
+  state.rng = state.dailyMode ? mulberry32(dailySeed(todayKey())) : Math.random;
+  state.bag = { colors: [], count: 0 };
+  setDailyIndicator(state.dailyMode);
 
-  for (let c = 0; c < GRID_COLS; c++) {
-    for (let r = 0; r < GRID_ROWS; r++) {
-      if (grid[c][r]) {
-        gameGroup.remove(grid[c][r].mesh);
-        grid[c][r].mesh.geometry.dispose();
-        grid[c][r].mesh.material.dispose();
-        grid[c][r] = null;
-      }
-    }
+  clearBoard();
+  clearDebris();
+
+  if (state.shootingCube) {
+    disposeMesh(state.shootingCube.mesh);
+    state.shootingCube = null;
   }
 
-  particles.forEach((p) => {
-    gameGroup.remove(p.mesh);
-    p.mesh.geometry.dispose();
-    p.mesh.material.dispose();
-  });
-  particles = [];
+  sweepStrayCubes();
 
-  if (shootingCube) {
-    gameGroup.remove(shootingCube.mesh);
-    shootingCube.mesh.geometry.dispose();
-    shootingCube.mesh.material.dispose();
-    shootingCube = null;
-  }
+  state.score = 0;
+  setScore(0);
+  state.gameOver = false;
+  state.paused = false;
+  state.wallAdvanceTimer = 0;
+  state.currentCol = Math.floor(GRID_COLS / 2);
 
-  // Nuclear cleanup — skip keepers
-  const keepers = new Set([spawnCube, columnHighlight]);
-  for (let i = gameGroup.children.length - 1; i >= 0; i--) {
-    const child = gameGroup.children[i];
-    if (child.isMesh && child.geometry?.type === 'BoxGeometry' && !keepers.has(child)) {
-      gameGroup.remove(child);
-      child.geometry.dispose();
-      child.material.dispose();
-    }
-  }
-
-  score = 0;
-  scoreEl.textContent = '0';
-  gameOver = false;
-  paused = false;
-  wallAdvanceTimer = 0;
-  currentCol = Math.floor(GRID_COLS / 2);
-
-  // Reset trail particles
-  trailParticles.forEach((p) => {
-    gameGroup.remove(p.mesh);
-    p.mesh.geometry.dispose();
-    p.mesh.material.dispose();
-  });
-  trailParticles = [];
+  clearTrail();
 
   // Reset juice
-  shakeTimer = 0;
-  shakeIntensity = 0;
-  freezeTimer = 0;
-  flashTimer = 0;
-  flashOverlayEl.style.opacity = 0;
-  intensityLevel = 0;
-  lastChainStep = 0;
+  resetShake();
+  state.freezeTimer = 0;
+  resetFlash();
+  state.intensityLevel = 0;
+  state.lastChainStep = 0;
 
-  // Reset cascade + announcer state. A stray setTimeout from a finished
-  // cascade will still fire, but announceBusy/queue are already clear so
-  // it's a harmless no-op against the new game.
-  cascade = null;
-  cascadeTimer = 0;
-  announceQueue.length = 0;
-  announceBusy = false;
-  chainCounterEl.style.display = 'none';
-  levelUpEl.style.display = 'none';
-  rowClearEl.style.display = 'none';
-  clutchEl.style.display = 'none';
+  // Reset cascade + announcer state
+  state.cascade = null;
+  state.cascadeTimer = 0;
+  resetAnnouncer();
 
   // Reset danger / clutch
-  slowMoTimer = 0;
-  if (dangerActive) {
-    dangerActive = false;
-    document.body.classList.remove('danger');
+  state.slowMoTimer = 0;
+  if (state.dangerActive) {
+    state.dangerActive = false;
+    setDanger(false);
   }
 
   // Reset input + timer state
-  queuedShot = false;
-  aimPointerId = null;
-  idleTimer = 0;
-  wallTimerFillEl.style.transform = 'scaleX(1)';
-  wallTimerEl.classList.remove('imminent');
+  state.queuedShot = false;
+  resetAim();
+  resetIdle();
+  resetWallTimer();
 
-  // Reset animations
-  landingAnims = [];
-  wallAnims = [];
+  resetCubeAnims();
 
-  // Reset run stats
-  runStats = { bestChain: 0, cleared: 0, clutches: 0 };
+  state.runStats = { bestChain: 0, cleared: 0, clutches: 0 };
 
   // Reset progression (theme 0 restores environment + palette + music)
-  level = 1;
-  totalClearedCount = 0;
-  levelEl.textContent = 'Level 1';
+  state.level = 1;
+  state.totalClearedCount = 0;
+  setLevel(1);
   applyTheme(0);
 
-  currentColorIndex = randomColorIndex();
-  nextQueue = [randomColorIndex(), randomColorIndex(), randomColorIndex()];
-  heldColorIndex = null;
-  holdUsedThisTurn = false;
+  state.currentColorIndex = dealColor();
+  state.nextQueue = [dealColor(), dealColor(), dealColor()];
+  state.heldColorIndex = null;
+  state.holdUsedThisTurn = false;
 
   updateSpawnCube();
   updateColumnHighlight();
@@ -1986,259 +557,57 @@ function restartGame(asDaily = false) {
 
   fitCamera();
 
-  wallWarningEl.classList.remove('active');
-  pauseScreen.style.display = 'none';
-  gameOverScreen.style.display = 'none';
+  hideOverlays();
 
   initGrid();
-  seedOpeningRows();
-  wallStarted = false;
+  placeOpeningSeeds();
+  state.wallStarted = false;
 }
 
-// ─── Next-queue + hold previews ──────────────────────────────────────────────
-function colorCssFor(idx) {
-  if (idx === RAINBOW_INDEX) {
-    return `linear-gradient(135deg, ${COLOR_NAMES.join(', ')})`;
+// Put a saved run (see serialize in game/state.js) on the board in place of
+// the current one. Only between shots: nothing may be in flight.
+function loadRun(data) {
+  if (state.shootingCube || state.cascade) throw new Error('loadRun: a shot or cascade is still resolving');
+  clearBoard();
+  deserialize(data);
+  for (let c = 0; c < GRID_COLS; c++) {
+    for (let r = 0; r < GRID_ROWS; r++) {
+      const cell = state.grid[c][r];
+      if (!cell) continue;
+      cell.mesh = createCubeMesh(cell.colorIndex);
+      cell.mesh.position.set(colToX(c), 0, rowToZ(r));
+      gameGroup.add(cell.mesh);
+    }
   }
-  if (idx === BOMB_INDEX) return '#ff6600';
-  return COLOR_NAMES[idx];
-}
-
-function paintSlot(el, idx) {
-  el.style.background = (idx === null || idx === undefined) ? 'transparent' : colorCssFor(idx);
-}
-
-function updateNextPreview() {
-  paintSlot(qSlot0, nextQueue[0]);
-  paintSlot(qSlot1, nextQueue[1]);
-  paintSlot(qSlot2, nextQueue[2]);
-}
-
-function updateHoldPreview() {
-  paintSlot(holdBoxEl, heldColorIndex);
+  setScore(state.score);
+  setLevel(state.level);
+  setDailyIndicator(state.dailyMode);
+  showPause(false);
+  applyTheme(themeIndexForLevel(state.level, THEMES.length));
+  updateColumnHighlight();
 }
 
 // ─── Pause ───────────────────────────────────────────────────────────────────
 function togglePause() {
-  if (gameOver) return;
-  paused = !paused;
-  pauseScreen.style.display = paused ? 'flex' : 'none';
-  if (!paused) {
+  if (state.gameOver) return;
+  state.paused = !state.paused;
+  showPause(state.paused);
+  if (!state.paused) {
     // Discard accumulated delta to prevent dt spike on resume
     clock.getDelta();
   }
 }
 
-pauseBtn.addEventListener('click', togglePause);
-resumeBtn.addEventListener('click', togglePause);
-pauseRestartBtn.addEventListener('click', () => {
-  paused = false;
-  pauseScreen.style.display = 'none';
-  restartGame();
-});
+// ─── Init & Game Loop ────────────────────────────────────────────────────────
+initInput({ shoot, holdSwap, togglePause, restartGame });
 
-// ─── Input ───────────────────────────────────────────────────────────────────
-window.addEventListener('keydown', (e) => {
-  if (e.code === 'Escape') {
-    if (!gameOver) togglePause();
-    return;
-  }
-  // Instant retry — the restart loop IS the addiction loop
-  if (gameOver && (e.code === 'KeyR' || e.code === 'Enter')) {
-    restartGame(dailyMode);
-    return;
-  }
-  if (gameOver || paused) return;
-
-  switch (e.code) {
-    case 'ArrowLeft':
-    case 'KeyA':
-      currentCol = Math.min(GRID_COLS - 1, currentCol + 1);
-      updateSpawnCube();
-      updateColumnHighlight();
-      updateGhost();
-      break;
-    case 'ArrowRight':
-    case 'KeyD':
-      currentCol = Math.max(0, currentCol - 1);
-      updateSpawnCube();
-      updateColumnHighlight();
-      updateGhost();
-      break;
-    case 'Space':
-      e.preventDefault();
-      shoot();
-      break;
-    case 'KeyE':
-      e.preventDefault();
-      holdSwap();
-      break;
-  }
-});
-
-// ─── Pointer aiming ──────────────────────────────────────────────────────────
-// One verb: put your thumb anywhere on the board, the cube snaps to that lane,
-// release to drop. No drag-accumulation, no separate quick-drop gesture, and
-// the same code path drives the mouse on desktop.
-let spawnScalePop = 0;
-
-function hapticPulse(ms = 10) {
-  if (navigator.vibrate) navigator.vibrate(ms);
-}
-
-function playTickSound() {
-  const now = audioCtx.currentTime;
-  const osc = audioCtx.createOscillator();
-  osc.type = 'sine';
-  osc.frequency.setValueAtTime(1200, now);
-  osc.frequency.exponentialRampToValueAtTime(800, now + 0.03);
-  const gain = audioCtx.createGain();
-  gain.gain.setValueAtTime(0.08, now);
-  gain.gain.exponentialRampToValueAtTime(0.001, now + 0.03);
-  osc.connect(gain).connect(audioCtx.destination);
-  osc.start(now);
-  osc.stop(now + 0.03);
-}
-
-function moveToColumn(newCol) {
-  if (newCol === currentCol) return;
-  currentCol = newCol;
-  updateSpawnCube();
-  updateColumnHighlight();
-  updateGhost();
-  spawnScalePop = 1;
-  hapticPulse(12);
-  playTickSound();
-}
-
-// Taps on interactive UI (hold box, buttons) must not fire a shot
-function isUiTarget(target) {
-  return target && target.closest
-    && target.closest('#hold-preview, #pause-btn, #daily-btn, button');
-}
-
-const aimRaycaster = new THREE.Raycaster();
-const aimNdc = new THREE.Vector2();
-// The board floor, as a plane the pointer ray can be intersected with
-const aimPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), CUBE_SIZE / 2);
-const aimPoint = new THREE.Vector3();
-
-let aimPointerId = null;
-let aimCancelled = false;
-
-// Screen point -> board lane. Returns null when the ray misses the floor or
-// lands behind the near edge, which is how a shot gets cancelled.
-function laneFromPointer(clientX, clientY) {
-  aimNdc.x = (clientX / window.innerWidth) * 2 - 1;
-  aimNdc.y = -(clientY / window.innerHeight) * 2 + 1;
-  aimRaycaster.setFromCamera(aimNdc, camera);
-  if (!aimRaycaster.ray.intersectPlane(aimPlane, aimPoint)) return null;
-  if (aimPoint.z < BOARD_BOUNDS.minZ - 0.5) return null;
-  return Math.max(0, Math.min(GRID_COLS - 1, Math.round(aimPoint.x / COL_CELL)));
-}
-
-function onAimStart(e) {
-  if (gameOver) {
-    if (!isUiTarget(e.target) && performance.now() - gameOverAt > RETRY_GUARD_MS) {
-      restartGame(dailyMode);
-    }
-    return;
-  }
-  if (paused || aimPointerId !== null) return;
-  if (isUiTarget(e.target)) return;
-  aimPointerId = e.pointerId;
-  aimCancelled = false;
-  dismissHint();
-  const lane = laneFromPointer(e.clientX, e.clientY);
-  if (lane !== null) moveToColumn(lane);
-}
-
-function onAimMove(e) {
-  if (e.pointerId !== aimPointerId || gameOver || paused) return;
-  const lane = laneFromPointer(e.clientX, e.clientY);
-  // Dragging off the near edge of the board arms a cancel; coming back disarms
-  aimCancelled = lane === null;
-  if (lane !== null) moveToColumn(lane);
-}
-
-function onAimEnd(e) {
-  if (e.pointerId !== aimPointerId) return;
-  aimPointerId = null;
-  if (gameOver || paused || aimCancelled) return;
-  shoot();
-}
-
-window.addEventListener('pointerdown', onAimStart);
-window.addEventListener('pointermove', onAimMove);
-window.addEventListener('pointerup', onAimEnd);
-window.addEventListener('pointercancel', () => { aimPointerId = null; });
-// Stop the page itself from panning/zooming under the thumb
-window.addEventListener('touchmove', (e) => e.preventDefault(), { passive: false });
-
-restartBtn.addEventListener('click', () => restartGame(false));
-holdBoxEl.addEventListener('click', () => holdSwap());
-
-// Daily challenge — same seeded board for everyone, resets each calendar day
-dailyBtn.addEventListener('click', () => {
-  if (paused) togglePause();
-  restartGame(true);
-});
-
-// ─── First-run hint ─────────────────────────────────────────────────────────
-// No tutorial screen. If a new player's board sits untouched, one line fades
-// in; the first touch dismisses it for good.
-let hintDismissed = localStorage.getItem('hueshot-hint-seen') === '1';
-let idleTimer = 0;
-
-function dismissHint() {
-  if (hintDismissed) return;
-  hintDismissed = true;
-  hintEl.classList.remove('show');
-  localStorage.setItem('hueshot-hint-seen', '1');
-}
-
-// ─── Resize ──────────────────────────────────────────────────────────────────
 window.addEventListener('resize', () => {
   fitCamera();
   renderer.setSize(window.innerWidth, window.innerHeight);
 });
 
-// ─── Rainbow + bomb visual animation ─────────────────────────────────────────
-function updateSpecialCubeVisuals(dt) {
-  rainbowTime += dt;
-
-  for (let c = 0; c < GRID_COLS; c++) {
-    for (let r = 0; r < GRID_ROWS; r++) {
-      const cell = grid[c][r];
-      if (!cell) continue;
-
-      if (cell.colorIndex === RAINBOW_INDEX) {
-        const hue = (rainbowTime * 0.5 + c * 0.1 + r * 0.05) % 1;
-        cell.mesh.material.color.setHSL(hue, 0.7, 0.7);
-        cell.mesh.material.emissive.setHSL(hue, 1, 0.15);
-      }
-
-      if (cell.colorIndex === BOMB_INDEX) {
-        const pulse = Math.sin(rainbowTime * 4) * 0.5 + 0.5;
-        cell.mesh.material.emissive.setRGB(0.3 * pulse, 0.15 * pulse, 0);
-      }
-    }
-  }
-
-  // Spawn cube special animations
-  if (currentColorIndex === RAINBOW_INDEX) {
-    const hue = (rainbowTime * 0.5) % 1;
-    spawnMat.color.setHSL(hue, 0.7, 0.7);
-    spawnMat.emissive.setHSL(hue, 1, 0.15);
-  } else if (currentColorIndex === BOMB_INDEX) {
-    const pulse = Math.sin(rainbowTime * 4) * 0.5 + 0.5;
-    spawnMat.emissive.setRGB(0.3 * pulse, 0.15 * pulse, 0);
-  }
-}
-
-// ─── Init & Game Loop ────────────────────────────────────────────────────────
 initGrid();
-seedOpeningRows();
+placeOpeningSeeds();
 createGroundPlane();
 createGridVisual();
 fitCamera();
@@ -2251,7 +620,7 @@ updateGhost();
 
 // Heartbeat synced to the music's beat while in danger
 music.onBeat = (time) => {
-  if (dangerActive && !gameOver && !paused) playHeartbeat(time);
+  if (state.dangerActive && !state.gameOver && !state.paused) playHeartbeat(time);
 };
 
 // Frame timer. THREE.Clock is deprecated in three 0.183; this is the same
@@ -2272,42 +641,39 @@ function animate() {
   let dt = Math.min(clock.getDelta(), 0.05);
 
   // When paused, still render but don't update game logic
-  if (paused) {
+  if (state.paused) {
     renderer.render(scene, camera);
     return;
   }
 
   // Hit-freeze: pause game updates briefly on big clears
-  if (freezeTimer > 0) {
-    freezeTimer -= dt;
+  if (state.freezeTimer > 0) {
+    state.freezeTimer -= dt;
     dt = 0;
   }
 
   let gameDt = dt;
 
   // Clutch slow-mo
-  if (slowMoTimer > 0) {
-    slowMoTimer -= dt;
+  if (state.slowMoTimer > 0) {
+    state.slowMoTimer -= dt;
     gameDt *= 0.35;
   }
 
   // Dynamic intensity update (always uses real dt)
-  updateDynamicIntensity(dt, lastChainStep);
+  updateDynamicIntensity(dt, state.lastChainStep);
   // Decay lastChainStep over time
-  if (lastChainStep > 0 && flashTimer <= 0) lastChainStep = 0;
+  if (state.lastChainStep > 0 && !isFlashing()) state.lastChainStep = 0;
 
-  if (!gameOver) {
+  if (!state.gameOver) {
     // Danger state tracking — drives vignette, heartbeat, and music push
-    const dangerNow = isInDanger();
-    if (dangerNow !== dangerActive) {
-      dangerActive = dangerNow;
-      document.body.classList.toggle('danger', dangerActive);
+    const dangerNow = isInDanger(state.grid);
+    if (dangerNow !== state.dangerActive) {
+      state.dangerActive = dangerNow;
+      setDanger(state.dangerActive);
     }
 
-    if (!hintDismissed) {
-      idleTimer += dt;
-      hintEl.classList.toggle('show', idleTimer > 2.5);
-    }
+    updateHint(dt);
 
     updateShooting(gameDt);
     updateCascade(gameDt);
@@ -2317,40 +683,18 @@ function animate() {
     updateWallAnims(dt);
     updateSpecialCubeVisuals(dt);
     updateGhost();
-
-    // Spawn trail particles behind shooting cube
-    if (shootingCube) {
-      const sc = shootingCube;
-      const trailColor = sc.colorIndex === RAINBOW_INDEX ? 0xffffff
-        : sc.colorIndex === BOMB_INDEX ? 0xff6600
-        : COLORS[sc.colorIndex];
-      if (Math.random() < 0.6) {
-        spawnTrailParticle(sc.mesh.position.x, sc.mesh.position.y, sc.mesh.position.z, trailColor);
-      }
-    }
+    emitShotTrail();
 
     // Wall advance -- frozen until the first shot, and while a cascade is
     // still resolving (advancing on top of an in-progress chain would try
     // to start a second cascade and corrupt both).
-    if (wallStarted && !cascade) {
-      wallAdvanceTimer += gameDt;
-      const currentInterval = getWallInterval();
-      const timeLeft = currentInterval - wallAdvanceTimer;
-
-      // The wall is no longer on a hidden clock: the bar drains for the
-      // whole interval and turns red for the last three seconds.
-      const remaining = Math.max(0, Math.min(1, timeLeft / currentInterval));
-      wallTimerFillEl.style.transform = `scaleX(${remaining})`;
-      wallTimerEl.classList.toggle('imminent', timeLeft <= 3);
-
-      if (timeLeft <= 3 && timeLeft > 0) {
-        wallWarningEl.classList.add('active');
-      } else {
-        wallWarningEl.classList.remove('active');
-      }
-      if (wallAdvanceTimer >= currentInterval) {
-        wallAdvanceTimer = 0;
-        wallWarningEl.classList.remove('active');
+    if (state.wallStarted && !state.cascade) {
+      state.wallAdvanceTimer += gameDt;
+      const currentInterval = wallInterval(state.level);
+      showWallTimer(currentInterval - state.wallAdvanceTimer, currentInterval);
+      if (state.wallAdvanceTimer >= currentInterval) {
+        state.wallAdvanceTimer = 0;
+        hideWallWarning();
         advanceWall();
       }
     }
@@ -2359,32 +703,9 @@ function animate() {
     updateTrailParticles(dt);
   }
 
-  // Spawn cube scale-pop feedback
-  if (spawnScalePop > 0) {
-    spawnScalePop = Math.max(0, spawnScalePop - dt * 8);
-    const s = 1 + spawnScalePop * 0.25;
-    spawnCube.scale.set(s, s, s);
-  } else {
-    spawnCube.scale.set(1, 1, 1);
-  }
-
-  // Ghost preview pulse
-  if (ghostCube.visible) {
-    ghostMat.opacity = 0.18 + Math.sin(Date.now() * 0.005) * 0.1;
-  }
-
-  // Screen shake, applied as an offset from the fitted camera position so the
-  // board stays framed no matter how hard a chain hits.
-  camera.position.copy(camBase);
-  if (shakeTimer > 0) {
-    shakeTimer -= dt;
-    const decay = Math.max(0, shakeTimer) / 0.3;
-    camera.position.x += (Math.random() - 0.5) * shakeIntensity * decay * 2;
-    camera.position.y += (Math.random() - 0.5) * shakeIntensity * decay * 2;
-    if (shakeTimer <= 0) shakeIntensity = 0;
-  }
-
-  camera.lookAt(camLookAt);
+  updateSpawnPop(dt);
+  pulseGhost();
+  updateCamera(dt);
 
   renderer.render(scene, camera);
 }
@@ -2392,49 +713,49 @@ function animate() {
 animate();
 
 // ─── Debug hook (?debug=1 only) ──────────────────────────────────────────────
-// Read/stage access for scripts/shoot.mjs and anyone poking at the console.
-// Not exposed without the query flag, so a player can't reach it by accident.
+// Read/stage access for scripts/shoot.mjs, scripts/replay.mjs and anyone
+// poking at the console. Not exposed without the query flag, so a player
+// can't reach it by accident.
 if (new URLSearchParams(location.search).get('debug') === '1') {
   window.__hs = {
     // grid[col][row] as colour indices (null = empty); row 0 is the player's row
     get grid() {
-      return grid.map((col) => col.map((cell) => (cell ? cell.colorIndex : null)));
+      return state.grid.map((col) => col.map((cell) => (cell ? cell.colorIndex : null)));
     },
-    get level() { return level; },
-    get score() { return score; },
+    get level() { return state.level; },
+    get score() { return state.score; },
     get cur() {
-      return { col: currentCol, color: currentColorIndex, next: [...nextQueue], held: heldColorIndex };
+      return { col: state.currentCol, color: state.currentColorIndex, next: [...state.nextQueue], held: state.heldColorIndex };
     },
     // A shot in flight or a cascade still resolving; input pressed now is buffered
-    get busy() { return !!(shootingCube || cascade); },
-    get gameOver() { return gameOver; },
-    get danger() { return dangerActive; },
-    landingRow,
+    get busy() { return !!(state.shootingCube || state.cascade); },
+    get gameOver() { return state.gameOver; },
+    get danger() { return state.dangerActive; },
+    landingRow: (col) => landingRow(state.grid, col),
     // Stage a cube without resolving matches; returns false if the cell is taken
     placeCube(col, row, colorIndex) {
-      if (grid[col]?.[row] !== null) return false;
+      if (state.grid[col]?.[row] !== null) return false;
       return !!placeCube(col, row, colorIndex);
     },
-    clearBoard() {
-      for (let c = 0; c < GRID_COLS; c++) {
-        for (let r = 0; r < GRID_ROWS; r++) removeCube(c, r);
-      }
-    },
+    clearBoard,
     // Set the cube in hand and/or the aimed lane: setCur({ color, col })
     setCur({ color, col } = {}) {
-      if (color !== undefined) currentColorIndex = color;
-      if (col !== undefined) currentCol = Math.max(0, Math.min(GRID_COLS - 1, col));
+      if (color !== undefined) state.currentColorIndex = color;
+      if (col !== undefined) state.currentCol = Math.max(0, Math.min(GRID_COLS - 1, col));
       updateSpawnCube();
       updateColumnHighlight();
       updateGhost();
     },
     // Jump progression to n cumulative clears, silently (no banner, no breather)
     setLevelClears(n) {
-      totalClearedCount = n;
-      level = levelForClears(n);
-      levelEl.textContent = `Level ${level}`;
-      const themeIdx = Math.floor((level - 1) / 3) % THEMES.length;
+      state.totalClearedCount = n;
+      state.level = levelForClears(n);
+      setLevel(state.level);
+      const themeIdx = themeIndexForLevel(state.level, THEMES.length);
       if (themeIdx !== currentThemeIndex) applyTheme(themeIdx);
     },
+    // The run as JSON, and putting one back; only while not busy
+    serialize: () => serialize(),
+    restore: (data) => loadRun(data),
   };
 }

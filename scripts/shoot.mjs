@@ -15,6 +15,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createServer } from 'vite';
 import { chromium } from 'playwright';
+import { COLS, ROWS, chooseLane, groupAt, seededRandom } from './bot.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const OUT = path.resolve(ROOT, process.env.SHOTS_DIR || 'shots');
@@ -22,9 +23,6 @@ const filters = process.argv.slice(2);
 
 const PHONE = { viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, isMobile: true, hasTouch: true };
 const DESKTOP = { viewport: { width: 1440, height: 900 }, deviceScaleFactor: 1 };
-
-const COLS = 7;
-const ROWS = 12;
 
 // ─── Staged boards ───────────────────────────────────────────────────────────
 // One string per row, starting at the far wall (row 11) and coming toward the
@@ -109,69 +107,7 @@ function parseBoard(rows) {
   return cells;
 }
 
-// ─── Greedy bot ──────────────────────────────────────────────────────────────
-// Flood-fill the same 4-connected same-colour group the game matches on.
-function groupAt(grid, col, row) {
-  const color = grid[col][row];
-  const seen = new Set();
-  const stack = [[col, row]];
-  while (stack.length) {
-    const [c, r] = stack.pop();
-    const key = `${c},${r}`;
-    if (c < 0 || c >= COLS || r < 0 || r >= ROWS || seen.has(key)) continue;
-    if (grid[c][r] === null || grid[c][r] !== color) continue;
-    seen.add(key);
-    stack.push([c - 1, r], [c + 1, r], [c, r - 1], [c, r + 1]);
-  }
-  return [...seen];
-}
-
-function landingRow(grid, col) {
-  for (let r = 0; r < ROWS; r++) if (grid[col][r] !== null) return r - 1;
-  return ROWS - 1;
-}
-
-// One-ply greedy: take the biggest clear available; otherwise grow the
-// biggest same-colour group; break ties toward the far wall, then the middle.
-// Never lands on rows 0-2 unless nothing else is left.
-function chooseLane(grid, color) {
-  let best = null;
-  for (let col = 0; col < COLS; col++) {
-    const row = landingRow(grid, col);
-    if (row < 0) continue;
-    let value;
-    if (color >= 5) {
-      // Rainbow / bomb: fire it into the most crowded spot
-      const neighbours = [[-1, 0], [1, 0], [0, 1]]
-        .filter(([dc, dr]) => grid[col + dc]?.[row + dr] != null).length;
-      value = neighbours * 50 + row * 2;
-    } else {
-      const sim = grid.map((lane) => lane.slice());
-      sim[col][row] = color;
-      const size = groupAt(sim, col, row).length;
-      value = size >= 3 ? 1000 + size * 50 : size * 40;
-      value += row * 2;
-    }
-    if (row <= 2) value -= 500;
-    value -= Math.abs(col - 3) * 0.1;
-    if (!best || value > best.value) best = { col, value };
-  }
-  return best && best.col;
-}
-
 // ─── Page helpers ────────────────────────────────────────────────────────────
-// Math.random is replaced with a fixed-seed PRNG before the game loads, so the
-// bag, the opening seeds and the bot's game are the same on every run.
-function seededRandom(seed) {
-  let a = seed >>> 0;
-  Math.random = function () {
-    a = (a + 0x6d2b79f5) | 0;
-    let t = Math.imul(a ^ (a >>> 15), 1 | a);
-    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
-}
-
 async function frames(page, n = 2) {
   await page.evaluate((count) => new Promise((resolve) => {
     let i = 0;
@@ -316,6 +252,8 @@ const SCENES = [
 // ─── Runner ──────────────────────────────────────────────────────────────────
 async function runScene(browser, baseUrl, scene, errors) {
   const context = await browser.newContext(scene.device || PHONE);
+  // Math.random is replaced with a fixed-seed PRNG before the game loads, so
+  // the bag, the opening seeds and the bot's game are the same on every run.
   await context.addInitScript(seededRandom, 0x5eed);
   if (scene.hintSeen !== false) {
     await context.addInitScript(() => localStorage.setItem('hueshot-hint-seen', '1'));
