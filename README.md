@@ -17,15 +17,15 @@ nvm use          # Node 22, from .nvmrc
 npm install
 npm run dev      # http://localhost:5173
 npm run build    # -> dist/
-npm run shots    # 8 scene screenshots -> shots/, non-zero exit on any page error
+npm run shots    # 9 scene screenshots -> shots/, non-zero exit on any page error
 npm run replay   # replay a recorded 60 s daily run, fail unless it ends identically
 npm run checks   # scripted gameplay checks on a virtual clock, e.g. an idle board stays put
 npm test         # Vitest on src/game/rules.js
 ```
 
 `npm run shots` (`scripts/shoot.mjs`) boots Vite, drives the game in headless Chromium
-and screenshots eight scenes: opening, aiming, a greedy bot's game, a staged ×2 chain,
-level-up, danger, game over, and desktop. Pass part of a scene name to run only that
+and screenshots nine scenes: opening, aiming, a greedy bot's game, a staged ×2 chain,
+level-up, danger, game over, desktop, and banners taking turns after a restart. Pass part of a scene name to run only that
 one (`npm run shots -- chain`). It reaches the game through `window.__hs`, a debug hook
 that exists only when the page is loaded with `?debug=1`.
 
@@ -47,7 +47,8 @@ property test that a freshly advanced wall never hands the player a match.
 build on the same virtual clock as the replay (`scripts/vclock.mjs`) and fails unless
 each ends the way the rules say: an idle board, left alone after one shot, must not
 score or level up before the wall reaches the front; a wall that comes due while
-a shot is in flight waits for it to land; and two runs of the same Daily that time
+a shot is in flight waits for it to land; a level-up holds the wall off for a 3 s
+breather on top of the next interval; and two runs of the same Daily that time
 their shots differently still get the same hand and the same wall rows. Pass part of a check's name to run only
 that one. A cascade starting while another is still resolving logs a console error,
 which fails every harness.

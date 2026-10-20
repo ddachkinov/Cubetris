@@ -17,6 +17,8 @@ export const WALL_ADVANCE_DECAY = 0.9;
 // costs the full ten.
 export const CLEARS_FOR_LEVEL_1 = 6;
 export const CLEARS_PER_LEVEL = 10;
+// Seconds of calm a level-up adds before the next wall advance
+export const LEVEL_UP_BREATHER = 3;
 export const ROW_CLEAR_BONUS = 200;
 
 // Five plain colours (0-4), then the special cubes

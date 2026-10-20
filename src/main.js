@@ -6,7 +6,7 @@
 
 import { THEMES } from './themes.js';
 import {
-  GRID_COLS, GRID_ROWS, SHOOT_SPEED, ROW_CLEAR_BONUS,
+  GRID_COLS, GRID_ROWS, SHOOT_SPEED, ROW_CLEAR_BONUS, LEVEL_UP_BREATHER,
   activeColorCount, wallInterval, levelForClears, themeIndexForLevel,
   dailyRngs, randomColorIndex, generateWallRow, seedOpeningRows,
   landingRow, reachedFront, isInDanger, computeRemovalSet, fullRowCount, gravityMoves,
@@ -163,7 +163,7 @@ function checkLevelUp(clearedThisAction) {
 
     // Tension-release pacing: level-up buys a calm breather before the
     // next wall advance (negative timer = extra time)
-    state.wallAdvanceTimer = Math.min(state.wallAdvanceTimer, -4);
+    state.wallAdvanceTimer = Math.min(state.wallAdvanceTimer, -LEVEL_UP_BREATHER);
 
     playLevelUpSound();
     triggerShake(0.15, 0.3);

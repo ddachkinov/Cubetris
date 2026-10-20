@@ -178,6 +178,47 @@ const CHECKS = [
     },
   },
   {
+    // Bug 5: a level-up buys a 3 s breather (the plan's number) before the
+    // next wall advance; it was 4 s. Clear the triple that reaches level 2
+    // and time the wall: breather + level 2's interval.
+    name: 'level-up-breather',
+    async run(page) {
+      await page.evaluate(() => {
+        window.__hs.clearBoard();
+        window.__hs.setCur({ col: 5 });
+      });
+      await press(page, 'Space'); // starts the wall
+      await settle(page);
+      await page.evaluate(() => {
+        const h = window.__hs;
+        h.setLevelClears(3);
+        h.placeCube(0, 11, 0);
+        h.placeCube(1, 11, 0);
+        h.setCur({ col: 2, color: 0 });
+      });
+      const r = await page.evaluate(() => {
+        const h = window.__hs;
+        const rp = window.__replay;
+        rp.run(1, [{ f: rp.frame, key: 'Space' }]);
+        let levelUp = null;
+        for (let i = 0; i < 1200; i++) {
+          const timer = h.wall.timer;
+          rp.run(1);
+          if (levelUp === null && h.level === 2) levelUp = { frame: rp.frame, interval: h.wall.interval };
+          if (levelUp && h.wall.timer === 0 && timer > 0) return { ...levelUp, advanced: rp.frame };
+        }
+        return levelUp;
+      });
+      check(r, 'no level-up');
+      check(r.advanced, 'no wall advance within 20 s of the level-up');
+      const gap = (r.advanced - r.frame) / 60;
+      const breather = gap - r.interval;
+      check(Math.abs(breather - 3) <= 2 / 60,
+        `wall came ${gap.toFixed(2)} s after the level-up: ${breather.toFixed(2)} s breather + ${r.interval} s interval, expected 3 s`);
+      return `wall ${gap.toFixed(2)} s after the level-up = 3 s breather + ${r.interval} s`;
+    },
+  },
+  {
     // Bug 3: the queue and the wall rows shared one RNG, so a shot fired a
     // little sooner or later changed both from then on. Two runs of the
     // same Daily fire the same three shots into the same lanes; only the
