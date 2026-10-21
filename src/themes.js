@@ -1,17 +1,13 @@
-// ─── Theme system (Lumines-style skins) ──────────────────────────────────────
-// A theme = environment palette + cube palette + music definition.
-// Cube palettes keep the same five hue families (red, green, blue, yellow,
-// magenta) across themes so color learning transfers between them.
-// Themes rotate every 3 levels.
+// ─── Themes ──────────────────────────────────────────────────────────────────
+// A theme is a paper tint (render/palette.js) and a key and tempo for the
+// music. The level picks the theme (themeIndexForLevel: every 3 levels), so a
+// theme change is the level-up's reveal: the board takes a new tint, the
+// music a new key. Four themes, three tints: Dawn, Dusk, Slate, then Dusk
+// again (in C minor, the fastest), so every theme change is a visible one.
 
 export const THEMES = [
   {
-    name: 'DEEP OCEAN',
-    bg: 0x08141f,
-    ground: 0x0c1c2c,
-    gridCore: 0x3a7a9a,
-    gridFade: 0x1d3d50,
-    palette: [0xff5c5c, 0x35d08e, 0x3fa9ff, 0xffd166, 0xff7ad9],
+    tint: 'dawn',
     music: {
       bpm: 104,
       progression: [
@@ -23,12 +19,7 @@ export const THEMES = [
     },
   },
   {
-    name: 'SOLAR FLARE',
-    bg: 0x1a0e08,
-    ground: 0x261407,
-    gridCore: 0xcc7a33,
-    gridFade: 0x66401e,
-    palette: [0xff4444, 0x9be564, 0x4fc3f7, 0xffb300, 0xff6ec7],
+    tint: 'dusk',
     music: {
       bpm: 118,
       progression: [
@@ -40,12 +31,7 @@ export const THEMES = [
     },
   },
   {
-    name: 'NEON CITY',
-    bg: 0x120821,
-    ground: 0x1b0d30,
-    gridCore: 0x9a4dff,
-    gridFade: 0x4b2580,
-    palette: [0xff3d6e, 0x2ee6a8, 0x38c3ff, 0xffe14d, 0xff5cf0],
+    tint: 'slate',
     music: {
       bpm: 126,
       progression: [
@@ -57,12 +43,7 @@ export const THEMES = [
     },
   },
   {
-    name: 'THE VOID',
-    bg: 0x050508,
-    ground: 0x0a0a10,
-    gridCore: 0x8899bb,
-    gridFade: 0x333a4d,
-    palette: [0xff2e2e, 0x30ff8e, 0x2e8eff, 0xffcf30, 0xff30e0],
+    tint: 'dusk',
     music: {
       bpm: 134,
       progression: [

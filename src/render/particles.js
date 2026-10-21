@@ -12,6 +12,9 @@
 // still in the air then shrinks away. (A per-instance dithered fade in the
 // shader looked a little softer, but intermittently wedged the software GL
 // every headless harness runs on, and took the page down with it.)
+//
+// On a phone that cannot keep up (budget.js), each burst is half as many
+// shards, the pool holds half as many, and the shot trail is off.
 
 import * as THREE from 'three';
 import { RAINBOW_INDEX, BOMB_INDEX } from '../game/rules.js';
@@ -19,8 +22,20 @@ import { state } from '../game/state.js';
 import { playExplosionSound, playBounceSound } from '../audio/sfx.js';
 import { COLORS, RAINBOW_BASE, BOMB_BODY, BOMB_FUSE } from './palette.js';
 import { CUBE_SIZE, gameGroup, colToX, rowToZ, onBeforeRender, uploadIfChanged } from './scene.js';
+import { onLowPower } from './budget.js';
 
 export const MAX_PARTICLES = 240;
+// The most live at once: the whole pool, or half of it in low power
+let cap = MAX_PARTICLES;
+let burstScale = 1;
+let trails = true;
+
+onLowPower(() => {
+  cap = MAX_PARTICLES / 2;
+  burstScale = 0.5;
+  trails = false;
+  clearTrail();
+});
 
 const geometry = new THREE.BoxGeometry(1, 1, 1);
 // Matte, like the cubes they came from
@@ -53,7 +68,7 @@ function makeParticle() {
 const spare = [];
 
 function takeParticle() {
-  if (particles.length >= MAX_PARTICLES) spare.push(particles.shift());
+  while (particles.length >= cap) spare.push(particles.shift());
   const p = spare.pop() || makeParticle();
   p.scale = 1;
   p.rotation.set(0, 0, 0);
@@ -104,7 +119,7 @@ export function spawnParticles(col, row, colorIndex) {
   const floorY = -CUBE_SIZE / 2;
   // Particle count scales with intensity level
   const baseCount = colorIndex === BOMB_INDEX ? 8 : 14;
-  const count = Math.round(baseCount * (1 + state.intensityLevel * 0.5));
+  const count = Math.round(baseCount * (1 + state.intensityLevel * 0.5) * burstScale);
   for (let i = 0; i < count; i++) {
     let pColor;
     if (colorIndex === RAINBOW_INDEX) {
@@ -237,7 +252,7 @@ export function updateTrailParticles(dt) {
 
 // Once per frame: spawn trail particles behind the shooting cube
 export function emitShotTrail() {
-  if (state.shootingCube) {
+  if (trails && state.shootingCube) {
     const sc = state.shootingCube;
     const trailColor = sc.colorIndex === RAINBOW_INDEX ? RAINBOW_BASE
       : sc.colorIndex === BOMB_INDEX ? BOMB_FUSE
@@ -250,4 +265,11 @@ export function emitShotTrail() {
 
 export function clearTrail() {
   for (let i = particles.length - 1; i >= 0; i--) if (particles[i].trail) release(i);
+}
+
+// Live debris and trail particles, and the cap (the debug hook reads this)
+export function particleStats() {
+  let trail = 0;
+  for (const p of particles) if (p.trail) trail++;
+  return { debris: particles.length - trail, trail, cap };
 }

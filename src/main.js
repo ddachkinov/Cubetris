@@ -8,7 +8,7 @@ import { THEMES } from './themes.js';
 import {
   GRID_COLS, GRID_ROWS, SHOOT_SPEED, ROW_CLEAR_BONUS, LEVEL_UP_BREATHER,
   activeColorCount, wallInterval, levelForClears, themeIndexForLevel,
-  dailyRngs, randomColorIndex, generateWallRow, seedOpeningRows,
+  dailyRngs, endlessRngs, randomColorIndex, generateWallRow, seedOpeningRows,
   landingRow, reachedFront, isInDanger, computeRemovalSet, fullRowCount, gravityMoves,
 } from './game/rules.js';
 import { state, serialize, deserialize, isBusy, SAVE_VERSION } from './game/state.js';
@@ -27,7 +27,8 @@ import {
   createGroundPlane, createGridVisual, applyEnvironment, setIntensityLighting,
 } from './render/scene.js';
 import { camera, fitCamera, triggerShake, resetShake, updateCamera } from './render/camera.js';
-import { setPalette } from './render/palette.js';
+import { tintForTheme } from './render/palette.js';
+import { watchFrame, isLowPower } from './render/budget.js';
 import {
   spawnCube, createCubeMesh, updateColumnHighlight, updateGhost, pulseGhost, updateSpawnCube,
   popSpawnCube, updateSpawnPop, recolorCubes, startSquash, updateLandingAnims, pushWallAnim,
@@ -35,6 +36,7 @@ import {
 } from './render/cubes.js';
 import {
   spawnParticles, updateParticles, clearDebris, updateTrailParticles, emitShotTrail, clearTrail,
+  particleStats,
 } from './render/particles.js';
 import {
   setScore, setBest, setLevel, spawnScorePopup, resetAnnouncer, showChainCounter,
@@ -47,6 +49,7 @@ import { haptic } from './platform/haptics.js';
 import { initNativeLifecycle } from './platform/lifecycle.js';
 import { shareText } from './platform/share.js';
 import { initInput, resetAim } from './input.js';
+import { DEBUG } from './debug.js';
 
 // ─── Progress that outlives a run ────────────────────────────────────────────
 let highScore = loadBest();
@@ -58,6 +61,12 @@ let dailyDate = null;
 // The front door is up (see openFrontDoor)
 let atFrontDoor = false;
 
+// An Endless run's seed: from the platform's random source, not Math.random
+// (see endlessRngs)
+function freshSeed() {
+  return crypto.getRandomValues(new Uint32Array(1))[0];
+}
+
 // Next cube for the hand: from the bag, or a special at higher levels
 function dealColor() {
   return randomColorIndex(state.bag, state.level, state.queueRng);
@@ -65,16 +74,14 @@ function dealColor() {
 
 setBest(highScore);
 
-// ─── Theme application (Lumines-style skins, rotate every 3 levels) ──────────
+// ─── Theme application (a tint and a key, every 3 levels) ────────────────────
 function applyTheme(idx) {
   const theme = THEMES[idx % THEMES.length];
   currentThemeIndex = idx % THEMES.length;
 
+  // The tint: ground, lines, lights and the cube colours, then every cube
+  // already on the board takes the new colours
   applyEnvironment(theme);
-
-  // Swap the cube palette (same 5 hue families, theme-tinted) and recolor
-  // every existing normal cube on the board
-  setPalette(theme.palette);
   recolorCubes();
 
   music.setTheme(theme.music);
@@ -178,7 +185,7 @@ function checkLevelUp(clearedThisAction) {
     playLevelUpSound();
     haptic('levelUp');
     triggerShake(0.15, 0.3);
-    showLevelUpBanner(state.level, themeChanged ? THEMES[themeIdx].name : null);
+    showLevelUpBanner(state.level, themeChanged ? tintForTheme(THEMES[themeIdx]).name : null);
   }
 }
 
@@ -573,7 +580,7 @@ function restartGame(asDaily = false) {
   dailyDate = state.dailyMode ? todayKey() : null;
   const { queueRng, wallRng } = state.dailyMode
     ? dailyRngs(dailyDate)
-    : { queueRng: Math.random, wallRng: Math.random };
+    : endlessRngs(freshSeed());
   state.queueRng = queueRng;
   state.wallRng = wallRng;
   state.bag = { colors: [], count: 0 };
@@ -764,7 +771,10 @@ const clock = {
 function animate() {
   requestAnimationFrame(animate);
 
-  let dt = Math.min(clock.getDelta(), 0.05);
+  const frameSeconds = clock.getDelta();
+  // A phone that keeps dropping frames gets lighter effects (render/budget.js)
+  watchFrame(frameSeconds * 1000);
+  let dt = Math.min(frameSeconds, 0.05);
 
   flushPendingSave();
 
@@ -872,11 +882,11 @@ document.getElementById('new-run-btn').addEventListener('click', openFrontDoor);
 
 animate();
 
-// ─── Debug hook (?debug=1 only) ──────────────────────────────────────────────
+// ─── Debug hook (?debug=1 only, see debug.js) ────────────────────────────────
 // Read/stage access for scripts/shoot.mjs, scripts/replay.mjs and anyone
-// poking at the console. Not exposed without the query flag, so a player
-// can't reach it by accident.
-if (new URLSearchParams(location.search).get('debug') === '1') {
+// poking at the console. Not exposed without the flag, so a player can't
+// reach it by accident.
+if (DEBUG) {
   window.__hs = {
     // grid[col][row] as colour indices (null = empty); row 0 is the player's row
     get grid() {
@@ -895,6 +905,9 @@ if (new URLSearchParams(location.search).get('debug') === '1') {
     get frontDoor() { return atFrontDoor; },
     get daily() { return state.dailyMode; },
     get danger() { return state.dangerActive; },
+    // The frame-budget fallback (render/budget.js) and what it changes
+    get lowPower() { return isLowPower(); },
+    get particles() { return particleStats(); },
     // Seconds on the wall timer (negative = breather), the current interval
     get wall() {
       return { started: state.wallStarted, timer: state.wallAdvanceTimer, interval: wallInterval(state.level) };

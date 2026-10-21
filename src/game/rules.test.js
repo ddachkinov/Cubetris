@@ -3,7 +3,7 @@ import {
   GRID_COLS, GRID_ROWS, NUM_COLORS, RAINBOW_INDEX, BOMB_INDEX,
   WALL_ADVANCE_INTERVAL_MIN,
   activeColorCount, wallInterval, levelForClears, themeIndexForLevel,
-  mulberry32, dailySeed, dailyRngs, drawColorFromBag, randomColorIndex,
+  mulberry32, dailySeed, dailyRngs, endlessRngs, drawColorFromBag, randomColorIndex,
   generateWallRow, seedOpeningRows,
   landingRow, findMatchGroup, computeRemovalSet, fullRowCount, gravityMoves,
 } from './rules.js';
@@ -418,6 +418,40 @@ describe('daily determinism', () => {
 });
 
 // ─── Wall advance ────────────────────────────────────────────────────────────
+describe('endless streams', () => {
+  const draw = (rng, n) => Array.from({ length: n }, () => rng());
+
+  it('deals the same run from the same seed, a different one from another', () => {
+    const a = endlessRngs(12345);
+    const b = endlessRngs(12345);
+    const c = endlessRngs(12346);
+    expect(draw(a.queueRng, 8)).toEqual(draw(b.queueRng, 8));
+    expect(draw(a.wallRng, 8)).toEqual(draw(b.wallRng, 8));
+    expect(draw(c.queueRng, 8)).not.toEqual(draw(endlessRngs(12345).queueRng, 8));
+  });
+
+  it('keeps the queue and the wall apart, and resumes either from its state', () => {
+    const { queueRng, wallRng } = endlessRngs(777);
+    expect(draw(queueRng, 4)).not.toEqual(draw(wallRng, 4));
+    const resumed = mulberry32(wallRng.state());
+    expect(draw(resumed, 5)).toEqual(draw(wallRng, 5));
+  });
+
+  it('does not draw from Math.random', () => {
+    const real = Math.random;
+    Math.random = () => { throw new Error('Math.random was called'); };
+    try {
+      const { queueRng, wallRng } = endlessRngs(1);
+      const bag = { colors: [], count: 0 };
+      for (let i = 0; i < 20; i++) randomColorIndex(bag, 8, queueRng);
+      seedOpeningRows(wallRng, 0, 1);
+      generateWallRow(wallRng, 5, emptyGrid());
+    } finally {
+      Math.random = real;
+    }
+  });
+});
+
 describe('wall advance', () => {
   it('test boards are settled and match-free, like the game between advances', () => {
     const rng = mulberry32(11);

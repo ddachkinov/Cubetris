@@ -9,8 +9,9 @@ export const state = {
   level: 1,
   totalClearedCount: 0,
 
-  // Swappable RNGs — Math.random normally, date-seeded PRNGs for Daily runs:
-  // one deals the queue, one builds the board (see dailyRngs)
+  // Two seeded streams, one deals the queue and one builds the board: by
+  // the date for a Daily (dailyRngs), afresh for each Endless run
+  // (endlessRngs)
   queueRng: Math.random,
   wallRng: Math.random,
   dailyMode: false,
@@ -63,9 +64,10 @@ export const state = {
 // shots. What is in flight (a cube mid-air, a cascade mid-step, a shot
 // buffered to go after them) is not saved, so save only when the run is not
 // busy; tweens, particles and the camera shake are cosmetic and start
-// fresh. Version 2 stores both random streams of a Daily (the queue's and
-// the wall's, see dailyRngs); a run on Math.random saves no RNG state and
-// resumes on Math.random.
+// fresh. Version 2 stores both random streams (the queue's and the wall's,
+// see dailyRngs and endlessRngs). An Endless run saved before it had streams
+// of its own dealt from Math.random; it saves null for them and resumes on
+// Math.random.
 export const SAVE_VERSION = 2;
 
 // A shot in flight, a cascade still resolving, or a shot buffered to go

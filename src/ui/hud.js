@@ -8,7 +8,7 @@ import { RAINBOW_INDEX, BOMB_INDEX, ROW_CLEAR_BONUS } from '../game/rules.js';
 import { state } from '../game/state.js';
 import { hintSeen, markHintSeen } from '../persistence.js';
 import { longDate, formatScore } from '../game/daily.js';
-import { COLOR_NAMES, BOMB_BODY, hexToCss, tintNameForThemeName } from '../render/palette.js';
+import { COLOR_NAMES, BOMB_BODY, hexToCss } from '../render/palette.js';
 import { glyphSvg } from '../render/glyphs.js';
 import { camera } from '../render/camera.js';
 
@@ -167,13 +167,12 @@ export function showChainCounter(step) {
   }, 1200);
 }
 
-// Level-up jumps the announcer queue. themeName is set when the level also
-// brought a new theme.
-export function showLevelUpBanner(level, themeName) {
+// Level-up jumps the announcer queue. tintName is set when the level also
+// brought a new theme, and names its tint.
+export function showLevelUpBanner(level, tintName) {
   announce(() => {
-    // The theme's look is now one of the paper tints; name that
     levelUpEl.innerHTML = `LEVEL ${level}`
-      + (themeName ? `<div class="banner-sub">${tintNameForThemeName(themeName)}</div>` : '')
+      + (tintName ? `<div class="banner-sub">${tintName}</div>` : '')
       + '<div class="banner-sub">WALL STABILIZED</div>';
     levelUpEl.style.display = 'block';
     levelUpEl.style.animation = 'none';

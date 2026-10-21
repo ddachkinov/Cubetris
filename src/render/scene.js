@@ -205,7 +205,7 @@ onBeforeRender(updateBoard);
 
 // ─── Theme ───────────────────────────────────────────────────────────────────
 // A theme picks a tint (palette.js): background, ground, lines, danger floor
-// and slab here; the cube colours through setPalette; the HUD through the
+// and slab here; the cube colours through setTint; the HUD through the
 // data-tint attribute its CSS keys on.
 export function applyEnvironment(theme) {
   const tint = tintForTheme(theme);

@@ -1,13 +1,11 @@
 // ─── Palette ─────────────────────────────────────────────────────────────────
 // "Ceramic on paper" (docs/APPSTORE_PLAN.md, Design — Beautiful): one colour
-// system in three tints. Each theme in themes.js maps to a tint here; the
-// theme still picks the music, the tint picks every colour on screen.
+// system in three tints. Each theme in themes.js names its tint; the tint
+// picks every colour on screen, the theme the music.
 //
 // COLORS / COLOR_NAMES are the five plain cube colours, as hex for materials
 // and as CSS for the HUD. The active tint swaps them in place, so importers
 // always see the current set.
-
-import { THEMES } from '../themes.js';
 
 // Coral, teal, cobalt, amber, orchid: no red-vs-green pair. Amber vs coral is
 // still close for protanopes, so every colour also carries a glyph (GLYPHS).
@@ -59,19 +57,8 @@ export const TINTS = {
   },
 };
 
-// Theme -> tint, by position in THEMES. Four themes, three tints: the cycle
-// is Dawn, Dusk, Slate, Dusk, so every theme change is a visible one.
-const TINT_CYCLE = ['dawn', 'dusk', 'slate', 'dusk'];
-
 export function tintForTheme(theme) {
-  const i = Math.max(0, THEMES.indexOf(theme));
-  return TINTS[TINT_CYCLE[i % TINT_CYCLE.length]];
-}
-
-// The level-up banner names the tint, not the old neon theme
-export function tintNameForThemeName(themeName) {
-  const theme = THEMES.find((t) => t.name === themeName);
-  return theme ? tintForTheme(theme).name : themeName;
+  return TINTS[theme.tint];
 }
 
 // Specials: rainbow is an animated hue on a white base; the bomb is a dark
@@ -100,12 +87,6 @@ export function setTint(tint) {
   currentTint = tint;
   for (let i = 0; i < COLORS.length; i++) COLORS[i] = tint.cubes[i];
   refreshColorNames();
-}
-
-// main.js hands over the theme's own palette; the tint for that theme wins
-export function setPalette(palette) {
-  const theme = THEMES.find((t) => t.palette === palette);
-  setTint(theme ? tintForTheme(theme) : currentTint);
 }
 
 export { css as hexToCss };

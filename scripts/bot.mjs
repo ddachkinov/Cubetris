@@ -90,12 +90,27 @@ export function chooseLane(grid, color) {
 }
 
 // Installed with context.addInitScript, so it runs before the game loads.
+// Seeds Math.random (debris, shake, sound), and crypto.getRandomValues for
+// 32-bit draws, which is where an Endless run's seed comes from; each from
+// its own stream, so how much three.js draws from Math.random never moves
+// the Endless board.
 export function seededRandom(seed) {
-  let a = seed >>> 0;
-  Math.random = function () {
-    a = (a + 0x6d2b79f5) | 0;
-    let t = Math.imul(a ^ (a >>> 15), 1 | a);
-    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  const stream = (s) => {
+    let a = s >>> 0;
+    return () => {
+      a = (a + 0x6d2b79f5) | 0;
+      let t = Math.imul(a ^ (a >>> 15), 1 | a);
+      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+      return (t ^ (t >>> 14)) >>> 0;
+    };
+  };
+  const next = stream(seed);
+  Math.random = () => next() / 4294967296;
+  const nextSeed = stream(seed ^ 0x9e3779b9);
+  const real = crypto.getRandomValues.bind(crypto);
+  crypto.getRandomValues = (arr) => {
+    if (!(arr instanceof Uint32Array)) return real(arr);
+    for (let i = 0; i < arr.length; i++) arr[i] = nextSeed();
+    return arr;
   };
 }

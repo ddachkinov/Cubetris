@@ -372,7 +372,8 @@ async function runScene(browser, baseUrl, scene, errors) {
     if (msg.type() === 'error') errors.push(`[${scene.name}] console.error: ${msg.text()}`);
   });
   try {
-    await page.goto(`${baseUrl}?debug=1`);
+    // The full effects: a slow software-GL frame must not switch to low power
+    await page.goto(`${baseUrl}?debug=1&lowpower=0`);
     await page.waitForFunction(() => window.__hs, null, { timeout: 15_000 });
     await frames(page, 10);
     // The app opens on the front door; the scenes play Endless from it

@@ -57,7 +57,7 @@ export function themeIndexForLevel(level, themeCount) {
   return Math.floor((level - 1) / 3) % themeCount;
 }
 
-// ─── Seeded RNG (Daily runs) ─────────────────────────────────────────────────
+// ─── Seeded RNG ──────────────────────────────────────────────────────────────
 export function hashString(s) {
   let h = 2166136261;
   for (let i = 0; i < s.length; i++) {
@@ -99,6 +99,19 @@ export function dailyRngs(dateKey) {
   return {
     queueRng: mulberry32(dailySeed(dateKey)),
     wallRng: mulberry32(hashString('hueshot-wall-' + dateKey)),
+  };
+}
+
+// An Endless run draws from the same two streams, seeded afresh for each
+// run instead of by the date. It used to deal from Math.random, which
+// three.js also draws from (four values for the id of every object it
+// makes), so the board depended on how many objects the renderer happened
+// to create. Seeded, an Endless run is also saved and resumed exactly, like
+// a Daily.
+export function endlessRngs(seed) {
+  return {
+    queueRng: mulberry32(seed),
+    wallRng: mulberry32(hashString('hueshot-wall-' + seed)),
   };
 }
 

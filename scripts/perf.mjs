@@ -66,7 +66,8 @@ async function main() {
     await context.addInitScript(instrument);
     const page = await context.newPage();
     page.on('pageerror', (err) => errors.push(err.message));
-    await page.goto(`${harness.baseUrl}?debug=1`);
+    // The full effects: the throttled page must not switch to low power
+    await page.goto(`${harness.baseUrl}?debug=1&lowpower=0`);
     await page.waitForFunction(() => window.__hs, null, { timeout: 15_000 });
     // Past the front door, into Endless
     await page.click('#door-endless');

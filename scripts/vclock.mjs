@@ -89,6 +89,9 @@ function installReplayDriver({ dateIso, checkEvery }) {
 
   window.__replay = {
     frame: 0,
+    // Milliseconds per frame; a check may slow the clock down to play a
+    // phone that drops frames
+    frameMs: FRAME_MS,
     get combos() {
       return combos;
     },
@@ -102,7 +105,7 @@ function installReplayDriver({ dateIso, checkEvery }) {
       const end = this.frame + n;
       while (this.frame < end) {
         for (const ev of events) if (ev.f === this.frame) dispatch(ev);
-        now += FRAME_MS;
+        now += this.frameMs;
         const due = callbacks;
         callbacks = [];
         for (const cb of due) cb(now);

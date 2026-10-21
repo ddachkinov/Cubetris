@@ -388,6 +388,78 @@ const CHECKS = [
     },
   },
   {
+    // W3-A: a phone that keeps dropping frames (p95 over 20 ms for 3 s)
+    // switches to half the debris, half the pool and no shot trail, and
+    // stays there. At a steady 60 fps it never does; neither does a
+    // stretch of slow frames shorter than that, or a long gap (a hidden
+    // page). Frames are slowed by running the virtual clock longer.
+    name: 'low-power-fallback',
+    async run(page) {
+      const setFrameMs = (ms) => page.evaluate((m) => { window.__replay.frameMs = m; }, ms);
+      const low = () => page.evaluate(() => window.__hs.lowPower);
+      // Fire the cube in hand into lane 0 on top of two of its colour;
+      // returns the debris of the clear, and the most trail seen in flight
+      const clear = () => page.evaluate(() => {
+        const h = window.__hs;
+        const rp = window.__replay;
+        h.clearBoard();
+        h.placeCube(0, 11, 4);
+        h.placeCube(0, 10, 4);
+        h.setCur({ col: 0, color: 4 });
+        rp.run(1, [{ f: rp.frame, key: 'Space' }]);
+        let trail = 0;
+        for (let i = 0; i < 120; i++) {
+          rp.run(1);
+          const p = h.particles;
+          trail = Math.max(trail, p.trail);
+          if (p.debris > 0) return { debris: p.debris, trail, cap: p.cap };
+        }
+        return null;
+      });
+
+      // Steady 60 fps, with 1.5 s of 40 ms frames and a 2 s gap: no. (The
+      // p95 is over a 1 s window, so it reads high for up to a second
+      // after the slow frames end: 1.5 s of them is 2.5 s over.)
+      await step(page, 240);
+      await setFrameMs(40);
+      await step(page, 37);
+      await setFrameMs(1000 / 60);
+      await step(page, 120);
+      await setFrameMs(2000);
+      await step(page, 1);
+      await setFrameMs(1000 / 60);
+      await step(page, 60);
+      check(!(await low()), 'low power at 60 fps with 1.5 s of slow frames and one gap');
+      const full = await clear();
+      check(full, 'the staged clear threw no debris');
+      check(full.trail > 0, 'no shot trail at full power');
+      await settle(page);
+      await step(page, 150); // the debris dies down
+
+      // 30 fps, as in iOS Low Power Mode: on after 3 s and a few frames
+      await setFrameMs(1000 / 30);
+      let frames = 0;
+      while (!(await low()) && frames < 300) {
+        await step(page, 10);
+        frames += 10;
+      }
+      check(await low(), 'still full power after 10 s at 30 fps');
+      const secs = (frames / 30).toFixed(1);
+      check(frames / 30 >= 3 && frames / 30 <= 3.5, `low power took ${secs} s at 30 fps`);
+      await setFrameMs(1000 / 60);
+      await step(page, 150);
+      const lite = await clear();
+      check(lite, 'the staged clear threw no debris in low power');
+      check(lite.trail === 0, `${lite.trail} trail particles in low power`);
+      check(lite.cap === 120, `the pool's cap is ${lite.cap} in low power`);
+      check(Math.abs(lite.debris * 2 - full.debris) <= 3, `debris ${full.debris} at full power, ${lite.debris} in low power`);
+      // And it stays: a minute back at 60 fps does not undo it
+      await step(page, 600);
+      check(await low(), 'low power wore off');
+      return `on after ${secs} s at 30 fps; debris ${full.debris} -> ${lite.debris}, trail ${full.trail} -> 0, cap 240 -> 120`;
+    },
+  },
+  {
     // W3-B: the app opens on the front door, today's board is a tap away
     // with unlimited tries, the day's best is kept and shared, and Home
     // goes back to the door. The all-time best is set high so a better try
