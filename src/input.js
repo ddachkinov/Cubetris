@@ -63,11 +63,15 @@ function laneFromPointer(clientX, clientY) {
   return Math.max(0, Math.min(GRID_COLS - 1, Math.round(aimPoint.x / COL_CELL)));
 }
 
-// actions: { shoot, holdSwap, togglePause, restartGame(asDaily) }
-export function initInput({ shoot, holdSwap, togglePause, restartGame }) {
+// actions: { shoot, holdSwap, togglePause, restartGame(asDaily), toggleSound }
+export function initInput({ shoot, holdSwap, togglePause, restartGame, toggleSound }) {
   window.addEventListener('keydown', (e) => {
     if (e.code === 'Escape') {
       if (!state.gameOver) togglePause();
+      return;
+    }
+    if (e.code === 'KeyM') {
+      toggleSound();
       return;
     }
     // Instant retry — the restart loop IS the addiction loop
@@ -148,6 +152,7 @@ export function initInput({ shoot, holdSwap, togglePause, restartGame }) {
   document.getElementById('pause-restart-btn').addEventListener('click', () => restartGame());
   document.getElementById('restart-btn').addEventListener('click', () => restartGame(false));
   document.getElementById('hold-preview').addEventListener('click', () => holdSwap());
+  document.getElementById('mute-btn').addEventListener('click', () => toggleSound());
 
   // Daily challenge — same seeded board for everyone, resets each calendar day
   document.getElementById('daily-btn').addEventListener('click', () => {

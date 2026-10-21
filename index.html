@@ -171,7 +171,7 @@
 
       /* ─── Pause and game over ─────────────────────────────────────
          A paper veil over the board, ink type, one solid button. */
-      #pause-screen, #game-over-screen {
+      #pause-screen, #continue-screen, #game-over-screen {
         display: none;
         position: absolute;
         top: 0; left: 0; width: 100%; height: 100%;
@@ -184,14 +184,15 @@
         pointer-events: auto;
         padding: 0 calc(24px + env(safe-area-inset-right)) 0 calc(24px + env(safe-area-inset-left));
       }
-      #pause-screen { z-index: 50; gap: 12px; }
-      #pause-screen h1, #game-over-screen h1 {
+      #pause-screen, #continue-screen { z-index: 50; gap: 12px; }
+      #continue-screen .continue-sub { font-size: 15px; color: var(--muted); margin: -6px 0 8px; }
+      #pause-screen h1, #continue-screen h1, #game-over-screen h1 {
         font-size: 40px;
         font-weight: 700;
         letter-spacing: 0.02em;
         margin-bottom: 12px;
       }
-      #pause-screen button, #game-over-screen button {
+      #pause-screen button, #continue-screen button, #game-over-screen button {
         font-family: inherit;
         font-size: 18px;
         font-weight: 600;
@@ -203,7 +204,7 @@
         cursor: pointer;
         min-width: 180px;
       }
-      #pause-screen .btn-restart {
+      #pause-screen .btn-restart, #continue-screen .btn-restart {
         background: transparent;
         color: var(--ink);
         border: 1.5px solid var(--chip);
@@ -377,6 +378,13 @@
         <h1>PAUSED</h1>
         <button id="resume-btn">Resume</button>
         <button id="pause-restart-btn" class="btn-restart">Restart</button>
+        <button id="mute-btn" class="btn-restart" aria-pressed="false">Sound: on</button>
+      </div>
+      <div id="continue-screen">
+        <h1>WELCOME BACK</h1>
+        <p class="continue-sub">Your run is where you left it.</p>
+        <button id="continue-btn">Continue</button>
+        <button id="new-run-btn" class="btn-restart">New run</button>
       </div>
       <div id="game-over-screen">
         <h1>GAME OVER</h1>

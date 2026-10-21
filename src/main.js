@@ -11,11 +11,14 @@ import {
   dailyRngs, randomColorIndex, generateWallRow, seedOpeningRows,
   landingRow, reachedFront, isInDanger, computeRemovalSet, fullRowCount, gravityMoves,
 } from './game/rules.js';
-import { state, serialize, deserialize } from './game/state.js';
-import { todayKey, loadBest, saveBest, loadLifeStats, saveLifeStats, recordDailyScore } from './persistence.js';
+import { state, serialize, deserialize, isBusy, SAVE_VERSION } from './game/state.js';
+import {
+  todayKey, loadBest, saveBest, loadLifeStats, saveLifeStats, recordDailyScore,
+  writeSavedRun, readSavedRun, clearSavedRun,
+} from './persistence.js';
 import {
   music, playLevelUpSound, playBombSound, playRowClearSound, playHeartbeat, playLandSound,
-  playWallPushSound, playClutchSound, playChainSound, playTickSound,
+  playWallPushSound, playClutchSound, playChainSound, playTickSound, toggleMute, isMuted,
 } from './audio/sfx.js';
 import {
   DEPTH_CELL, scene, renderer, gameGroup, colToX, rowToZ, disposeMesh,
@@ -36,6 +39,7 @@ import {
   showLevelUpBanner, showRowClearBanner, showClutchBanner, triggerFlash, updateFlash, isFlashing,
   resetFlash, updateNextPreview, updateHoldPreview, showWallTimer, hideWallWarning, resetWallTimer,
   setDanger, setDailyIndicator, showGameOver, showPause, hideOverlays, updateHint, resetIdle,
+  showContinue, setMuteLabel,
 } from './ui/hud.js';
 import { hapticPulse } from './ui/haptics.js';
 import { initInput, resetAim } from './input.js';
@@ -448,6 +452,40 @@ function advanceWall() {
   }
 
   beginCascade(afterCascade);
+  // Snapshot the run once the wall's cascade (if any) has settled
+  saveRunWhenIdle();
+}
+
+// ─── Saving a run in progress ────────────────────────────────────────────────
+// A run is snapshotted (serialize(), see game/state.js) on every wall
+// advance and when the page is hidden, so it survives the app being killed
+// and is offered back on the next launch. Only between shots: if a shot or a
+// cascade is still resolving, the save waits for the first idle frame.
+let savePending = false;
+
+function saveRun() {
+  savePending = false;
+  writeSavedRun({ run: serialize(), dailyDate: state.dailyMode ? todayKey() : null, savedAt: Date.now() });
+}
+
+function saveRunWhenIdle() {
+  if (state.gameOver) return;
+  if (isBusy(state)) savePending = true;
+  else saveRun();
+}
+
+// Once per frame: a save that was waiting for the board to settle
+function flushPendingSave() {
+  if (savePending && !state.gameOver && !isBusy(state)) saveRun();
+}
+
+// A saved run is offered back if it can still be played: a Daily only on
+// its own day, since tomorrow's Daily is a different board
+function resumableRun() {
+  const saved = readSavedRun();
+  if (!saved || !saved.run || saved.run.v !== SAVE_VERSION) return null;
+  if (saved.dailyDate && saved.dailyDate !== todayKey()) return null;
+  return saved;
 }
 
 // ─── Game Over ───────────────────────────────────────────────────────────────
@@ -460,6 +498,9 @@ function triggerGameOver() {
   state.gameOver = true;
   state.gameOverAt = performance.now();
   state.queuedShot = false;
+  // A finished run is not offered back
+  savePending = false;
+  clearSavedRun();
 
   const isNewBest = score > highScore;
   if (isNewBest) {
@@ -495,6 +536,10 @@ function clearBoard() {
 }
 
 function restartGame(asDaily = false) {
+  // A new run replaces any saved one
+  savePending = false;
+  clearSavedRun();
+
   // Daily runs use date-seeded PRNGs — everyone gets the same board today
   state.dailyMode = !!asDaily;
   const { queueRng, wallRng } = state.dailyMode
@@ -607,14 +652,35 @@ function togglePause() {
   if (state.gameOver) return;
   state.paused = !state.paused;
   showPause(state.paused);
+  showContinue(false);
   if (!state.paused) {
     // Discard accumulated delta to prevent dt spike on resume
     clock.getDelta();
   }
 }
 
+// ─── Lifecycle ───────────────────────────────────────────────────────────────
+// The page hidden (another tab, the app switcher, a call): pause a live run
+// and save it. Shown again, it waits on the pause screen for the player.
+// The audio side (suspend, resume, resync) is in audio/sfx.js.
+function onHide() {
+  if (state.gameOver) return;
+  if (!state.paused) togglePause();
+  saveRunWhenIdle();
+}
+
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) onHide();
+});
+window.addEventListener('pagehide', onHide);
+
+function toggleSound() {
+  setMuteLabel(toggleMute());
+}
+
 // ─── Init & Game Loop ────────────────────────────────────────────────────────
-initInput({ shoot, holdSwap, togglePause, restartGame });
+initInput({ shoot, holdSwap, togglePause, restartGame, toggleSound });
+setMuteLabel(isMuted());
 
 window.addEventListener('resize', () => {
   fitCamera();
@@ -654,6 +720,8 @@ function animate() {
   requestAnimationFrame(animate);
 
   let dt = Math.min(clock.getDelta(), 0.05);
+
+  flushPendingSave();
 
   // When paused, still render but don't update game logic
   if (state.paused) {
@@ -729,6 +797,28 @@ function animate() {
   renderer.render(scene, camera);
 }
 
+// A run saved by an earlier session: put it on the board, paused, and ask
+const resumable = resumableRun();
+if (resumable) {
+  try {
+    loadRun(resumable.run);
+    state.paused = true;
+    showContinue(true);
+  } catch (err) {
+    // An unreadable save is dropped, not fatal
+    console.warn('saved run could not be restored', err);
+    clearSavedRun();
+    restartGame(false);
+  }
+}
+
+// Continue: the saved run carries on from where it was
+document.getElementById('continue-btn').addEventListener('click', () => {
+  if (state.paused) togglePause();
+});
+// New run: drop the save
+document.getElementById('new-run-btn').addEventListener('click', () => restartGame(false));
+
 animate();
 
 // ─── Debug hook (?debug=1 only) ──────────────────────────────────────────────
@@ -750,6 +840,7 @@ if (new URLSearchParams(location.search).get('debug') === '1') {
     // to go; a shot pressed now is buffered
     get busy() { return !!(state.shootingCube || state.cascade || state.queuedShot); },
     get gameOver() { return state.gameOver; },
+    get paused() { return state.paused; },
     get danger() { return state.dangerActive; },
     // Seconds on the wall timer (negative = breather), the current interval
     get wall() {

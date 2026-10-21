@@ -20,7 +20,7 @@ npm run build    # -> dist/
 npm run shots    # 9 scene screenshots -> shots/, non-zero exit on any page error
 npm run replay   # replay a recorded 60 s daily run, fail unless it ends identically
 npm run checks   # scripted gameplay checks on a virtual clock, e.g. an idle board stays put
-npm test         # Vitest on src/game/rules.js
+npm test         # Vitest on src/game/rules.js and the music scheduler
 ```
 
 `npm run shots` (`scripts/shoot.mjs`) boots Vite, drives the game in headless Chromium
@@ -44,7 +44,8 @@ where the two runs diverge. It then replays a second time with a `serialize()` �
 `npm run replay -- --record` re-records the script, for when the gameplay is *meant* to
 change.
 
-`npm test` covers the pure rules only: flood fill, removal, gravity, the curve table,
+`npm test` covers the music scheduler (no notes while paused, no burst on resume) and
+the pure rules: flood fill, removal, gravity, the curve table,
 the bag, wall rows, the opening-seed guarantee and daily determinism, including a
 property test that a freshly advanced wall never hands the player a match.
 
@@ -54,7 +55,10 @@ each ends the way the rules say: an idle board, left alone after one shot, must 
 score or level up before the wall reaches the front; a wall that comes due while
 a shot is in flight waits for it to land; a level-up holds the wall off for a 3 s
 breather on top of the next interval; and two runs of the same Daily that time
-their shots differently still get the same hand and the same wall rows. Pass part of a check's name to run only
+their shots differently still get the same hand and the same wall rows; a run is saved
+at every wall advance (only while nothing is in flight) and a reload offers Continue and
+puts back exactly the run that was left; and hiding the page suspends the audio and
+pauses the run, and showing it again plays no burst of missed notes. Pass part of a check's name to run only
 that one. A cascade starting while another is still resolving logs a console error,
 which fails every harness.
 
@@ -74,14 +78,14 @@ and all visuals are Three.js primitives, so the whole game is the JavaScript bun
 | `src/main.js` | Game flow (shooting, cascades, the wall, levels, game over, restart) and the frame loop |
 | `src/game/rules.js` | Pure rules: landing, flood-fill matching, removal sets, gravity, wall rows, opening seeds, the bag, the seeded RNG and the difficulty curves |
 | `src/game/rules.test.js` | Vitest suite for `rules.js` (`npm test`) |
-| `src/game/state.js` | The one `state` object a run is made of, and `serialize`/`deserialize` for saving one between shots |
+| `src/game/state.js` | The one `state` object a run is made of, `serialize`/`deserialize` (version 2, both Daily streams) and `isBusy` |
 | `src/render/` | Three.js: `scene.js` (renderer, lights, static board), `camera.js` (fit to any aspect, shake), `cubes.js` (every cube drawn by one `InstancedMesh`; aim visuals, cube tweens), `particles.js` (debris and shot trail, one pooled `InstancedMesh` of 240), `palette.js` (the paper palette and its three tints, Dawn/Dusk/Slate), `glyphs.js` (the face glyph per colour, as a texture atlas and as SVG), `perf.js` (the `?debug=1` frame meter) |
-| `src/audio/sfx.js` | The `AudioContext` and every synthesized sound effect |
-| `src/audio/music.js` | `MusicEngine` — four synthesized stems driven by gameplay intensity, plus a beat grid used to quantize sound effects |
+| `src/audio/sfx.js` | The `AudioContext`, the bus graph (master with mute, music bus ducked -3 dB on clears, sfx bus), suspend/resume on visibility, and every synthesized sound effect |
+| `src/audio/music.js` | `MusicEngine` — four synthesized stems driven by gameplay intensity, plus a beat grid used to quantize sound effects; `pause`/`resume`/`resync` keep it from bursting after a stall |
 | `src/ui/hud.js` | The DOM overlay: score line, previews, wall timer, banners, popups, flash, pause and game-over screens, first-run hint |
 | `src/ui/haptics.js` | Vibration |
 | `src/input.js` | Keyboard, pointer aiming and the HUD buttons |
-| `src/persistence.js` | Everything in `localStorage` |
+| `src/persistence.js` | Everything that outlives a run, behind a small storage-backend interface (localStorage on the web), read into memory once at boot |
 | `src/themes.js` | Per-theme music key; each theme maps to a paper tint in `render/palette.js` (its own environment and cube colours are no longer drawn) |
 | `scripts/shoot.mjs` | Screenshot harness behind `npm run shots` |
 | `scripts/replay.mjs` | Input record/replay harness behind `npm run replay`; the recording is in `scripts/replays/` |
@@ -92,12 +96,13 @@ and all visuals are Three.js primitives, so the whole game is the JavaScript bun
 | `docs/DESIGN_AUDIT_2026-02.md` | Earlier design audit, kept for history |
 
 Progress is stored in `localStorage` (`hueshot-best`, `-stats`, `-daily-<date>`,
-`-hint-seen`; see `src/persistence.js`). Clear those keys to reset.
+`-hint-seen`, `-muted`, and `-run`, the run in progress; see `src/persistence.js`).
+Clear those keys to reset.
 
 ## Controls
 
 Touch is the target platform: drag to pick a lane, release to fire. On desktop,
-A/D or ←/→ move, Space fires, E holds, Esc pauses.
+A/D or ←/→ move, Space fires, E holds, Esc pauses, M mutes.
 
 ## Status
 

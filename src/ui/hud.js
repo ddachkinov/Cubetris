@@ -35,6 +35,8 @@ const wallTimerEl = document.getElementById('wall-timer');
 const wallTimerFillEl = document.getElementById('wall-timer-fill');
 const hintEl = document.getElementById('hint');
 const pauseScreen = document.getElementById('pause-screen');
+const continueScreen = document.getElementById('continue-screen');
+const muteBtn = document.getElementById('mute-btn');
 const chainCounterEl = document.getElementById('chain-counter');
 const flashOverlayEl = document.getElementById('flash-overlay');
 const announcerEl = document.getElementById('announcer');
@@ -329,10 +331,21 @@ export function showPause(on) {
   pauseScreen.style.display = on ? 'flex' : 'none';
 }
 
+// A run saved by an earlier session, waiting on the board for Continue
+export function showContinue(on) {
+  continueScreen.style.display = on ? 'flex' : 'none';
+}
+
+export function setMuteLabel(muted) {
+  muteBtn.textContent = muted ? 'Sound: off' : 'Sound: on';
+  muteBtn.setAttribute('aria-pressed', String(muted));
+}
+
 // Restart: back to a bare board
 export function hideOverlays() {
   wallWarningEl.classList.remove('active');
   pauseScreen.style.display = 'none';
+  continueScreen.style.display = 'none';
   gameOverScreen.style.display = 'none';
 }
 
