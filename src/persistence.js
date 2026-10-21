@@ -18,6 +18,8 @@
 // module awaits it at the top level, so importers see it loaded), and every
 // read after that is synchronous.
 
+import { isNative } from './platform/native.js';
+
 const PREFIX = 'hueshot-';
 const BEST_KEY = PREFIX + 'best';
 const STATS_KEY = PREFIX + 'stats';
@@ -48,8 +50,18 @@ export const localStorageBackend = {
   },
 };
 
-// The iOS shell swaps in its own backend here (see src/platform/)
+// In the iOS shell, UserDefaults through @capacitor/preferences (see
+// src/platform/storage.js); in a browser, localStorage. The native module
+// is a dynamic import, so the web bundle never loads it.
 async function chooseBackend() {
+  if (isNative) {
+    try {
+      const { preferencesBackend } = await import('./platform/storage.js');
+      return preferencesBackend;
+    } catch {
+      // Plugin missing: fall back rather than not start
+    }
+  }
   return localStorageBackend;
 }
 

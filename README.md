@@ -83,10 +83,11 @@ and all visuals are Three.js primitives, so the whole game is the JavaScript bun
 | `src/audio/sfx.js` | The `AudioContext`, the bus graph (master with mute, music bus ducked -3 dB on clears, sfx bus), suspend/resume on visibility, and every synthesized sound effect |
 | `src/audio/music.js` | `MusicEngine` — four synthesized stems driven by gameplay intensity, plus a beat grid used to quantize sound effects; `pause`/`resume`/`resync` keep it from bursting after a stall |
 | `src/ui/hud.js` | The DOM overlay: score line, previews, wall timer, banners, popups, flash, pause and game-over screens, first-run hint |
-| `src/ui/haptics.js` | Vibration |
+| `src/platform/` | The native seam: haptics, storage backend, lifecycle and share, each with a browser fallback |
 | `src/input.js` | Keyboard, pointer aiming and the HUD buttons |
 | `src/persistence.js` | Everything that outlives a run, behind a small storage-backend interface (localStorage on the web), read into memory once at boot |
 | `src/themes.js` | Per-theme music key; each theme maps to a paper tint in `render/palette.js` (its own environment and cube colours are no longer drawn) |
+| `capacitor.config.ts`, `ios/` | The Capacitor iOS project (see iOS shell) |
 | `scripts/shoot.mjs` | Screenshot harness behind `npm run shots` |
 | `scripts/replay.mjs` | Input record/replay harness behind `npm run replay`; the recording is in `scripts/replays/` |
 | `scripts/checks.mjs` | Scripted gameplay checks behind `npm run checks` |
@@ -98,6 +99,26 @@ and all visuals are Three.js primitives, so the whole game is the JavaScript bun
 Progress is stored in `localStorage` (`hueshot-best`, `-stats`, `-daily-<date>`,
 `-hint-seen`, `-muted`, and `-run`, the run in progress; see `src/persistence.js`).
 Clear those keys to reset.
+
+## iOS shell
+
+The App Store build is the same web build wrapped by [Capacitor](https://capacitorjs.com)
+8 (`capacitor.config.ts`, `ios/`): iPhone only, iOS 16+, portrait, status bar hidden,
+with the Haptics, App, Preferences, Share and ScreenOrientation plugins and a
+`PrivacyInfo.xcprivacy` (UserDefaults, reason CA92.1; nothing collected, no tracking).
+
+```sh
+npm run ios      # vite build && cap sync ios, then open ios/App/App.xcodeproj in Xcode
+```
+
+The game reaches native code only through `src/platform/`: `haptics.js` (the haptic
+table, Taptic Engine in the shell and `navigator.vibrate` in a browser), `storage.js`
+(the persistence backend on Preferences/UserDefaults), `lifecycle.js` (app inactive and
+active, the portrait lock), `share.js` (share sheet, Web Share or clipboard). Plugins are
+loaded with dynamic `import()` behind a `window.Capacitor` check, so a browser never
+fetches them. `.github/workflows/ios.yml` builds an unsigned archive on a macOS runner
+on every push that touches the app; signing and TestFlight happen on a Mac with the
+team's certificates.
 
 ## Controls
 

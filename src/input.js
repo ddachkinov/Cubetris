@@ -10,7 +10,7 @@ import { playTickSound } from './audio/sfx.js';
 import { camera, BOARD_BOUNDS } from './render/camera.js';
 import { CUBE_SIZE, COL_CELL } from './render/scene.js';
 import { updateSpawnCube, updateColumnHighlight, updateGhost, popSpawnCube } from './render/cubes.js';
-import { hapticPulse } from './ui/haptics.js';
+import { haptic } from './platform/haptics.js';
 import { dismissHint } from './ui/hud.js';
 
 // The tap that ends a run must not immediately start the next one
@@ -24,7 +24,7 @@ function moveToColumn(newCol) {
   updateColumnHighlight();
   updateGhost();
   popSpawnCube();
-  hapticPulse(12);
+  haptic('select');
   playTickSound();
 }
 

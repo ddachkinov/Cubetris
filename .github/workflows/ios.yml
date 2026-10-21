@@ -1,0 +1,77 @@
+# Builds the iOS shell, unsigned: the Vite build, `cap sync`, then xcodebuild
+# archive with code signing switched off. Proves the Capacitor project
+# compiles; signing and TestFlight happen on a Mac with the team's
+# certificates. The unsigned .xcarchive is kept as an artifact for 7 days.
+name: iOS
+
+on:
+  push:
+    paths:
+      - 'ios/**'
+      - 'src/**'
+      - 'index.html'
+      - 'capacitor.config.ts'
+      - 'package.json'
+      - 'package-lock.json'
+      - '.github/workflows/ios.yml'
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ios-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Unsigned iOS build
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - run: npm ci
+      - run: npm run build
+      - run: npx cap sync ios
+
+      - name: Show toolchain
+        run: |
+          xcodebuild -version
+          xcodebuild -list -project ios/App/App.xcodeproj
+
+      - name: Archive, unsigned
+        run: |
+          set -o pipefail
+          xcodebuild archive \
+            -project ios/App/App.xcodeproj \
+            -scheme App \
+            -configuration Release \
+            -destination 'generic/platform=iOS' \
+            -archivePath "$RUNNER_TEMP/Hueshot.xcarchive" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            | tee "$RUNNER_TEMP/xcodebuild.log" | grep -E "error:|warning: .*deprecated|\*\* (ARCHIVE|BUILD) (SUCCEEDED|FAILED) \*\*" || true
+          test -d "$RUNNER_TEMP/Hueshot.xcarchive/Products/Applications/App.app"
+
+      - name: Check the bundle
+        run: |
+          APP="$RUNNER_TEMP/Hueshot.xcarchive/Products/Applications/App.app"
+          test -f "$APP/PrivacyInfo.xcprivacy"
+          test -f "$APP/public/index.html"
+          /usr/libexec/PlistBuddy -c 'Print :MinimumOSVersion' "$APP/Info.plist"
+          /usr/libexec/PlistBuddy -c 'Print :UISupportedInterfaceOrientations' "$APP/Info.plist"
+          du -sh "$APP"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ios-unsigned
+          retention-days: 7
+          path: |
+            ${{ runner.temp }}/Hueshot.xcarchive
+            ${{ runner.temp }}/xcodebuild.log

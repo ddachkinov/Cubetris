@@ -19,6 +19,7 @@ import {
 import {
   music, playLevelUpSound, playBombSound, playRowClearSound, playHeartbeat, playLandSound,
   playWallPushSound, playClutchSound, playChainSound, playTickSound, toggleMute, isMuted,
+  suspendAudio, resumeAudio,
 } from './audio/sfx.js';
 import {
   DEPTH_CELL, scene, renderer, gameGroup, colToX, rowToZ, disposeMesh,
@@ -41,7 +42,8 @@ import {
   setDanger, setDailyIndicator, showGameOver, showPause, hideOverlays, updateHint, resetIdle,
   showContinue, setMuteLabel,
 } from './ui/hud.js';
-import { hapticPulse } from './ui/haptics.js';
+import { haptic } from './platform/haptics.js';
+import { initNativeLifecycle } from './platform/lifecycle.js';
 import { initInput, resetAim } from './input.js';
 
 // ─── Progress that outlives a run ────────────────────────────────────────────
@@ -131,7 +133,7 @@ function triggerClutch() {
   playClutchSound();
   triggerFlash(0x66ffe0, 0.2);
   triggerShake(0.18, 0.3);
-  hapticPulse(40);
+  haptic('heavy');
   showClutchBanner(bonus);
 }
 
@@ -170,6 +172,7 @@ function checkLevelUp(clearedThisAction) {
     state.wallAdvanceTimer = Math.min(state.wallAdvanceTimer, -LEVEL_UP_BREATHER);
 
     playLevelUpSound();
+    haptic('levelUp');
     triggerShake(0.15, 0.3);
     showLevelUpBanner(state.level, themeChanged ? THEMES[themeIdx].name : null);
   }
@@ -239,6 +242,8 @@ function runCascadeStep() {
     const isCombo = cascade.chainStep > 1;
     addPoints(points);
     spawnScorePopup(sumX / count, sumZ / count, isCombo ? `+${points} x${cascade.chainStep}` : `+${points}`, isCombo ? 'combo' : '');
+    // Chain x3 and up is the heavy one; a row clear below is heavy too
+    haptic(cascade.chainStep >= 3 ? 'heavy' : 'clear');
     if (isCombo) {
       playChainSound(cascade.chainStep);
       showChainCounter(cascade.chainStep);
@@ -256,6 +261,7 @@ function runCascadeStep() {
   if (rowClearsThisStep > 0) {
     addPoints(rowClearsThisStep * ROW_CLEAR_BONUS);
     playRowClearSound();
+    haptic('heavy');
     showRowClearBanner(rowClearsThisStep);
     triggerShake(0.25, 0.35);
     triggerFreeze(0.1);
@@ -364,7 +370,7 @@ function holdSwap() {
   state.holdUsedThisTurn = true;
   popSpawnCube();
   playTickSound();
-  hapticPulse(15);
+  haptic('select');
   updateSpawnCube();
   updateGhost();
   updateNextPreview();
@@ -396,6 +402,7 @@ function updateShooting(dt) {
     const cell = placeCube(shot.col, shot.targetRow, shot.colorIndex);
     if (cell) startSquash(cell.mesh);
     playLandSound();
+    haptic('land');
 
     state.shootingCube = null;
     state.shootingVelocity = null;
@@ -427,6 +434,7 @@ function advanceWall() {
 
   // The wall grinding forward is an EVENT: rumble + shake + tweened motion
   playWallPushSound();
+  haptic('wall');
   triggerShake(0.08, 0.3);
 
   const { grid } = state;
@@ -498,6 +506,7 @@ function triggerGameOver() {
   state.gameOver = true;
   state.gameOverAt = performance.now();
   state.queuedShot = false;
+  haptic('gameOver');
   // A finished run is not offered back
   savePending = false;
   clearSavedRun();
@@ -671,6 +680,15 @@ function onHide() {
 
 document.addEventListener('visibilitychange', () => {
   if (document.hidden) onHide();
+});
+// In the iOS shell the app goes inactive (a call, the app switcher) before
+// the page is hidden; treat it the same, audio included
+initNativeLifecycle({
+  onHide() {
+    onHide();
+    suspendAudio();
+  },
+  onShow: resumeAudio,
 });
 window.addEventListener('pagehide', onHide);
 
