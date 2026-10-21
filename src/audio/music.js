@@ -2,11 +2,25 @@
 // Four stems (bass, chords, drums, arp) whose volumes are driven by gameplay
 // intensity. Also exposes a beat grid so SFX can be quantized to the music
 // (the Lumines trick) and an onBeat callback for heartbeat-style effects.
+//
+// Notes are scheduled a little ahead on the audio clock by a 30 ms timer.
+// Whenever that timer stops running while the clock keeps going (a hidden
+// tab throttles timers to 1 Hz, a suspended context comes back), the next
+// tick would schedule every step it missed at once: a burst of notes.
+// pause() stops the timer; resume() and resync() put the step grid back at
+// "now" first.
+
+// How far ahead of the audio clock notes are scheduled, and how far behind
+// it the next step may fall before resync() is needed
+const LOOKAHEAD_S = 0.12;
+const MAX_LAG_S = 0.25;
 
 export class MusicEngine {
-  constructor(ctx) {
+  // output: the node the music plays into (the game's music bus)
+  constructor(ctx, output = ctx.destination) {
     this.ctx = ctx;
     this.started = false;
+    this.running = false;
 
     this.master = ctx.createGain();
     this.master.gain.value = 0.0;
@@ -14,7 +28,7 @@ export class MusicEngine {
     this.filter.type = 'lowpass';
     this.filter.frequency.value = 18000;
     this.master.connect(this.filter);
-    this.filter.connect(ctx.destination);
+    this.filter.connect(output);
 
     this.layers = {};
     for (const name of ['bass', 'chords', 'drums', 'arp']) {
@@ -46,9 +60,30 @@ export class MusicEngine {
   start() {
     if (this.started) return;
     this.started = true;
-    this.nextStepTime = this.ctx.currentTime + 0.1;
     this.master.gain.setTargetAtTime(0.5, this.ctx.currentTime, 1.2);
+    this.resume();
+  }
+
+  // Stop scheduling (the page is hidden, the context is being suspended)
+  pause() {
+    clearInterval(this._timer);
+    this._timer = null;
+    this.running = false;
+  }
+
+  // Start scheduling again from "now"
+  resume() {
+    if (!this.started || this.running) return;
+    this.resync();
+    this.running = true;
     this._timer = setInterval(() => this._schedule(), 30);
+  }
+
+  // Put the next step just ahead of the audio clock, so nothing missed while
+  // the scheduler was not running gets played late, all at once. The step
+  // counter carries on, so the bar and the chord stay where they were.
+  resync() {
+    this.nextStepTime = this.ctx.currentTime + 0.1;
   }
 
   setTheme({ bpm, progression }) {
@@ -88,7 +123,10 @@ export class MusicEngine {
   }
 
   _schedule() {
-    const ahead = this.ctx.currentTime + 0.12;
+    const now = this.ctx.currentTime;
+    // Fell behind anyway (a long main-thread stall): skip, don't catch up
+    if (this.nextStepTime < now - MAX_LAG_S) this.resync();
+    const ahead = now + LOOKAHEAD_S;
     while (this.nextStepTime < ahead) {
       this._playStep(this.step, this.nextStepTime);
       this.nextStepTime += this.stepDur;

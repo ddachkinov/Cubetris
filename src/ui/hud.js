@@ -7,7 +7,8 @@ import * as THREE from 'three';
 import { RAINBOW_INDEX, BOMB_INDEX, ROW_CLEAR_BONUS } from '../game/rules.js';
 import { state } from '../game/state.js';
 import { hintSeen, markHintSeen } from '../persistence.js';
-import { COLOR_NAMES } from '../render/palette.js';
+import { COLOR_NAMES, BOMB_BODY, hexToCss, tintNameForThemeName } from '../render/palette.js';
+import { glyphSvg } from '../render/glyphs.js';
 import { camera } from '../render/camera.js';
 
 // ─── DOM refs ────────────────────────────────────────────────────────────────
@@ -34,8 +35,11 @@ const wallTimerEl = document.getElementById('wall-timer');
 const wallTimerFillEl = document.getElementById('wall-timer-fill');
 const hintEl = document.getElementById('hint');
 const pauseScreen = document.getElementById('pause-screen');
+const continueScreen = document.getElementById('continue-screen');
+const muteBtn = document.getElementById('mute-btn');
 const chainCounterEl = document.getElementById('chain-counter');
 const flashOverlayEl = document.getElementById('flash-overlay');
+const announcerEl = document.getElementById('announcer');
 
 // ─── Score line ──────────────────────────────────────────────────────────────
 export function setScore(score) {
@@ -51,11 +55,26 @@ export function setLevel(level) {
 }
 
 // ─── Score popups ─────────────────────────────────────────────────────────────
+// A popup floats this far up over its life (see score-float in index.html)
+const POPUP_RISE_PX = 60;
+// Line height of the largest popup (a combo, 30px font, scaled 1.2 on entry)
+const POPUP_HEIGHT_PX = 40;
+const POPUP_GAP_PX = 6;
+
+// A popup starts over the cubes it scored for, but never inside the
+// announcer's band: a clear at the far wall used to put "+60 x2" right on
+// top of DOUBLE!. Banners can arrive after the popup (a level-up lands at
+// the end of the cascade), so the band is kept clear whether or not one is
+// showing.
 export function spawnScorePopup(worldX, worldZ, label, extraClass) {
   const pos = new THREE.Vector3(worldX, 1, worldZ);
   pos.project(camera);
   const sx = (pos.x * 0.5 + 0.5) * window.innerWidth;
-  const sy = (-pos.y * 0.5 + 0.5) * window.innerHeight;
+  let sy = (-pos.y * 0.5 + 0.5) * window.innerHeight;
+  const band = announcerEl.getBoundingClientRect();
+  if (sy - POPUP_RISE_PX < band.bottom && sy + POPUP_HEIGHT_PX > band.top) {
+    sy = band.bottom + POPUP_RISE_PX + POPUP_GAP_PX;
+  }
 
   const el = document.createElement('div');
   el.className = 'score-popup' + (extraClass ? ' ' + extraClass : '');
@@ -128,12 +147,10 @@ export function showChainCounter(step) {
     chainCounterEl.style.animation = 'none';
     void chainCounterEl.offsetWidth;
 
-    // Color escalation based on chain step
-    const colors = ['', '', '#ff6ef5', '#ff4444', '#ffcc00', '#44ff88', '#4488ff', '#ffffff'];
-    const color = step < colors.length ? colors[step] : '#ffffff';
-    chainCounterEl.style.color = color;
-    chainCounterEl.style.textShadow = `0 0 20px ${color}, 0 0 40px ${color}`;
-    chainCounterEl.style.fontSize = Math.min(72, 40 + step * 8) + 'px';
+    // Escalates through the cube palette and grows a little per step
+    const colors = ['', '', 'var(--coral)', 'var(--cobalt)', 'var(--amber)', 'var(--teal)', 'var(--orchid)'];
+    chainCounterEl.style.color = colors[Math.min(step, colors.length - 1)];
+    chainCounterEl.style.fontSize = Math.min(56, 36 + step * 4) + 'px';
 
     chainCounterEl.style.animation = 'chain-pop 1.2s ease-out forwards';
     chainCounterEl.addEventListener('animationend', () => {
@@ -146,11 +163,10 @@ export function showChainCounter(step) {
 // brought a new theme.
 export function showLevelUpBanner(level, themeName) {
   announce(() => {
+    // The theme's look is now one of the paper tints; name that
     levelUpEl.innerHTML = `LEVEL ${level}`
-      + (themeName
-        ? `<div style="font-size:20px;letter-spacing:6px;margin-top:6px;">${themeName}</div>`
-        : '')
-      + '<div style="font-size:13px;opacity:0.65;margin-top:4px;">WALL STABILIZED</div>';
+      + (themeName ? `<div class="banner-sub">${tintNameForThemeName(themeName)}</div>` : '')
+      + '<div class="banner-sub">WALL STABILIZED</div>';
     levelUpEl.style.display = 'block';
     levelUpEl.style.animation = 'none';
     void levelUpEl.offsetWidth;
@@ -221,16 +237,28 @@ export function resetFlash() {
 }
 
 // ─── Next-queue + hold previews ──────────────────────────────────────────────
+// Each chip is the cube's colour with the cube's glyph on it, so the queue
+// reads without colour too
 function colorCssFor(idx) {
   if (idx === RAINBOW_INDEX) {
     return `linear-gradient(135deg, ${COLOR_NAMES.join(', ')})`;
   }
-  if (idx === BOMB_INDEX) return '#ff6600';
+  if (idx === BOMB_INDEX) return hexToCss(BOMB_BODY);
   return COLOR_NAMES[idx];
 }
 
 function paintSlot(el, idx) {
-  el.style.background = (idx === null || idx === undefined) ? 'transparent' : colorCssFor(idx);
+  const empty = idx === null || idx === undefined;
+  el.style.background = empty ? 'transparent' : colorCssFor(idx);
+  el.classList.toggle('filled', !empty);
+  // Repaint the glyph only when the colour changes
+  if (el.dataset.glyph !== String(idx)) {
+    el.dataset.glyph = String(idx);
+    el.innerHTML = empty ? '' : glyphSvg(idx);
+    const svg = el.firstElementChild;
+    if (svg && idx === BOMB_INDEX) svg.classList.add('fuse');
+    if (svg && idx === RAINBOW_INDEX) svg.classList.add('on-dark');
+  }
 }
 
 export function updateNextPreview() {
@@ -282,7 +310,14 @@ export function showGameOver({ score, best, isNewBest, recap, daily }) {
   finalScoreEl.textContent = score;
   finalBestEl.textContent = best;
   newBestEl.style.display = isNewBest ? 'block' : 'none';
-  runStatsEl.textContent = recap;
+  // Wrap between the recap's items, never inside one; a separator travels
+  // with the item after it, so no line ends on a bullet
+  runStatsEl.replaceChildren(...recap.split(' • ').flatMap((item, i) => {
+    const span = document.createElement('span');
+    span.className = 'recap-item';
+    span.textContent = i ? `• ${item}` : item;
+    return i ? [' ', span] : [span];
+  }));
   if (daily) {
     dailyResultEl.textContent = daily;
     dailyResultEl.style.display = 'block';
@@ -296,10 +331,21 @@ export function showPause(on) {
   pauseScreen.style.display = on ? 'flex' : 'none';
 }
 
+// A run saved by an earlier session, waiting on the board for Continue
+export function showContinue(on) {
+  continueScreen.style.display = on ? 'flex' : 'none';
+}
+
+export function setMuteLabel(muted) {
+  muteBtn.textContent = muted ? 'Sound: off' : 'Sound: on';
+  muteBtn.setAttribute('aria-pressed', String(muted));
+}
+
 // Restart: back to a bare board
 export function hideOverlays() {
   wallWarningEl.classList.remove('active');
   pauseScreen.style.display = 'none';
+  continueScreen.style.display = 'none';
   gameOverScreen.style.display = 'none';
 }
 

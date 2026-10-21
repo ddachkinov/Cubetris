@@ -1,7 +1,7 @@
 {
   "name": "hueshot",
   "version": "1.0.0",
-  "description": "Hueshot — a 3D match-3 cube shooter built with Three.js",
+  "description": "Hueshot \u2014 a 3D match-3 cube shooter built with Three.js",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -10,7 +10,9 @@
     "shots": "node scripts/shoot.mjs",
     "replay": "node scripts/replay.mjs",
     "test": "vitest run",
-    "checks": "node scripts/checks.mjs"
+    "checks": "node scripts/checks.mjs",
+    "perf": "node scripts/perf.mjs",
+    "ios": "vite build && cap sync ios"
   },
   "repository": {
     "type": "git",
@@ -20,10 +22,19 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
+    "@capacitor/app": "^8.1.2",
+    "@capacitor/core": "^8.5.3",
+    "@capacitor/haptics": "^8.0.2",
+    "@capacitor/ios": "^8.5.3",
+    "@capacitor/preferences": "^8.0.1",
+    "@capacitor/screen-orientation": "^8.0.2",
+    "@capacitor/share": "^8.0.3",
     "three": "^0.183.1"
   },
   "devDependencies": {
+    "@capacitor/cli": "^8.5.3",
     "playwright": "1.56.1",
+    "typescript": "^5.9.3",
     "vite": "^7.3.1",
     "vitest": "^5.0.5"
   }

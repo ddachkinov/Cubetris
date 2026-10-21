@@ -4,12 +4,49 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
-    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-    <meta name="theme-color" content="#08141f" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <meta name="theme-color" content="#f3eee6" />
     <title>Hueshot</title>
     <style>
+      /* ─── Ceramic on paper ────────────────────────────────────────
+         One colour system in three tints (src/render/palette.js); the
+         renderer sets data-tint on <html> when the theme changes. HUD
+         type is the system's rounded face with tabular numbers, and
+         nothing glows. */
+      :root {
+        --paper: #f3eee6;
+        --ink: #2b2a28;
+        --muted: #8a8479;
+        --chip: rgba(43, 42, 40, 0.16);
+        --veil: rgba(243, 238, 230, 0.94);
+        --coral: #f25f5c;
+        --teal: #2ec4b6;
+        --cobalt: #3a6ff2;
+        --amber: #ffb020;
+        --orchid: #b564e3;
+        --announce-y: calc(env(safe-area-inset-top) + 150px);
+        --font: ui-rounded, system-ui, sans-serif;
+      }
+      :root[data-tint="slate"] {
+        --paper: #dde3e8;
+        --muted: #6f7a84;
+        --veil: rgba(221, 227, 232, 0.94);
+      }
+      :root[data-tint="dusk"] {
+        --paper: #2a2734;
+        --ink: #f3eee6;
+        --muted: #a39db3;
+        --chip: rgba(243, 238, 230, 0.2);
+        --veil: rgba(42, 39, 52, 0.94);
+      }
       * { margin: 0; padding: 0; box-sizing: border-box; }
-      body { overflow: hidden; background: #111; font-family: 'Segoe UI', sans-serif; }
+      body {
+        overflow: hidden;
+        background: var(--paper);
+        color: var(--ink);
+        font-family: var(--font);
+        -webkit-font-smoothing: antialiased;
+      }
       canvas { display: block; }
       #ui {
         position: absolute;
@@ -17,6 +54,15 @@
         left: 0;
         width: 100%;
         height: 100%;
+        pointer-events: none;
+      }
+      /* The announcer slot: every banner is centred on this line, and score
+         popups keep out of the band around it (see spawnScorePopup) */
+      #announcer {
+        position: absolute;
+        left: 0; right: 0;
+        top: calc(var(--announce-y) - 56px);
+        height: 112px;
         pointer-events: none;
       }
       /* ─── Top bar ─────────────────────────────────────────────────
@@ -31,80 +77,79 @@
         gap: 12px;
         padding: calc(12px + env(safe-area-inset-top)) calc(16px + env(safe-area-inset-right))
                  12px calc(16px + env(safe-area-inset-left));
-        color: #fff;
+        color: var(--ink);
       }
-      .bar-slot { display: flex; flex-direction: column; align-items: center; gap: 6px; }
-      .bar-slot.left { align-items: flex-start; }
+      .bar-slot { display: flex; flex-direction: column; align-items: center; gap: 4px; }
+      .bar-slot.left { flex-direction: row; align-items: flex-start; gap: 8px; }
+      .bar-slot.center { flex: 1; min-width: 0; white-space: nowrap; }
       .bar-slot.right { align-items: flex-end; }
+      .hold-col { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; }
       .bar-caption {
         font-size: 10px;
+        font-weight: 600;
         letter-spacing: 1.5px;
-        color: rgba(255,255,255,0.45);
+        color: var(--muted);
       }
       #score-val {
-        font-size: 30px;
+        font-size: 28px;
         font-weight: 700;
         font-variant-numeric: tabular-nums;
         line-height: 1;
       }
       #score-sub {
-        font-size: 12px;
+        font-size: 13px;
         font-variant-numeric: tabular-nums;
-        color: rgba(255,255,255,0.5);
+        color: var(--muted);
       }
-      #level-val { color: #7bf; font-weight: 700; }
-      #daily-indicator { color: #ffd166; font-weight: 700; font-size: 13px; }
+      #score-sub strong { color: var(--ink); font-weight: 600; }
+      #level-val { color: var(--ink); font-weight: 600; }
+      #daily-indicator { color: var(--coral); font-weight: 700; font-size: 11px; letter-spacing: 1.5px; }
       #daily-indicator[hidden] { display: none; }
 
-      /* Hold + next: colour chips, no keyboard letters */
+      /* Hold + next: colour chips carrying the same glyph as the cube */
+      #hold-preview, .q-slot {
+        display: flex; align-items: center; justify-content: center;
+        color: rgba(0, 0, 0, 0.42);
+      }
       #hold-preview {
         width: 42px; height: 42px;
         border-radius: 10px;
-        border: 2px dashed rgba(255,255,255,0.35);
+        border: 2px dashed var(--chip);
         pointer-events: auto;
         cursor: pointer;
       }
+      #hold-preview.filled { border-style: solid; border-color: transparent; }
       #queue-preview { display: flex; align-items: center; gap: 6px; }
-      .q-slot { width: 42px; height: 42px; border-radius: 10px; border: 2px solid rgba(255,255,255,0.3); }
-      .q-slot.small { width: 30px; height: 30px; opacity: 0.75; }
-      .q-slot.tiny { width: 22px; height: 22px; opacity: 0.5; }
+      .q-slot { width: 42px; height: 42px; border-radius: 10px; }
+      .q-slot.small { width: 30px; height: 30px; border-radius: 8px; opacity: 0.8; }
+      .q-slot.tiny { width: 22px; height: 22px; border-radius: 6px; opacity: 0.6; }
+      .glyph { width: 62%; height: 62%; }
+      .glyph.on-dark { color: rgba(255, 255, 255, 0.7); }
+      .glyph.fuse { color: var(--coral); }
 
-      /* Pause + daily: small glyphs, out of the way of the thumb */
+      /* Pause + daily: two small glyphs stacked beside the hold, in the top
+         row and above the wall timer, out of the way of the thumb */
+      #glyph-col { display: flex; flex-direction: column; gap: 4px; }
       .glyph-btn {
-        width: 34px; height: 34px;
-        border: 1px solid rgba(255,255,255,0.25);
-        border-radius: 9px;
-        background: rgba(0,0,0,0.25);
-        color: rgba(255,255,255,0.75);
-        font-size: 15px;
+        width: 30px; height: 30px;
+        border: 1.5px solid var(--chip);
+        border-radius: 8px;
+        background: transparent;
+        color: var(--ink);
         cursor: pointer;
         pointer-events: auto;
         display: flex; align-items: center; justify-content: center;
       }
-      .glyph-btn:hover { background: rgba(255,255,255,0.1); }
-      #glyph-row { display: flex; gap: 8px; }
+      .glyph-btn svg { width: 16px; height: 16px; fill: currentColor; stroke: currentColor; }
+      .glyph-btn svg[fill="none"] { fill: none; }
+      .glyph-btn svg circle { fill: currentColor; }
+      .glyph-btn:hover { background: var(--chip); }
 
       /* ─── Wall timer ──────────────────────────────────────────────
-         The wall was on a hidden timer with only a 3s border flash. It
-         is now always visible: a bar that drains toward the advance. */
-      #wall-timer {
-        position: absolute;
-        left: calc(16px + env(safe-area-inset-left));
-        right: calc(16px + env(safe-area-inset-right));
-        top: calc(74px + env(safe-area-inset-top));
-        height: 3px;
-        border-radius: 2px;
-        background: rgba(255,255,255,0.12);
-        overflow: hidden;
-      }
-      #wall-timer-fill {
-        height: 100%;
-        width: 100%;
-        transform-origin: left center;
-        background: #7bf;
-        transition: background-color 0.3s;
-      }
-      #wall-timer.imminent #wall-timer-fill { background: #ff4444; }
+         The timer runs along the base of the far-wall slab in the
+         scene. The DOM bar stays for hud.js but is not drawn. */
+      #wall-timer { display: none; }
+      #wall-timer-fill { height: 100%; transform-origin: left center; }
 
       /* First-run hint — appears only if an untouched board sits idle */
       #hint {
@@ -114,190 +159,149 @@
         transform: translateX(-50%);
         padding: 10px 18px;
         border-radius: 999px;
-        background: rgba(0,0,0,0.55);
-        color: rgba(255,255,255,0.9);
+        background: var(--ink);
+        color: var(--paper);
         font-size: 14px;
+        font-weight: 600;
         white-space: nowrap;
         opacity: 0;
-        transition: opacity 0.4s;
+        transition: opacity 200ms cubic-bezier(0.2, 0.8, 0.2, 1);
       }
-      #hint.show { opacity: 1; }
-      /* Pause screen */
-      #pause-screen {
+      #hint.show { opacity: 0.92; }
+
+      /* ─── Pause and game over ─────────────────────────────────────
+         A paper veil over the board, ink type, one solid button. */
+      #pause-screen, #continue-screen, #game-over-screen {
         display: none;
         position: absolute;
         top: 0; left: 0; width: 100%; height: 100%;
-        background: rgba(0,0,0,0.75);
-        color: #fff;
+        background: var(--veil);
+        color: var(--ink);
         flex-direction: column;
         align-items: center;
         justify-content: center;
+        text-align: center;
         pointer-events: auto;
-        z-index: 50;
-        gap: 16px;
+        padding: 0 calc(24px + env(safe-area-inset-right)) 0 calc(24px + env(safe-area-inset-left));
       }
-      #pause-screen h1 { font-size: 48px; margin-bottom: 10px; color: #7bf; }
-      #pause-screen button {
-        font-size: 20px;
+      #pause-screen, #continue-screen { z-index: 50; gap: 12px; }
+      #continue-screen .continue-sub { font-size: 15px; color: var(--muted); margin: -6px 0 8px; }
+      #pause-screen h1, #continue-screen h1, #game-over-screen h1 {
+        font-size: 40px;
+        font-weight: 700;
+        letter-spacing: 0.02em;
+        margin-bottom: 12px;
+      }
+      #pause-screen button, #continue-screen button, #game-over-screen button {
+        font-family: inherit;
+        font-size: 18px;
+        font-weight: 600;
         padding: 12px 32px;
         border: none;
-        border-radius: 6px;
-        background: #4a9eff;
-        color: #fff;
+        border-radius: 12px;
+        background: var(--ink);
+        color: var(--paper);
         cursor: pointer;
         min-width: 180px;
       }
-      #pause-screen button:hover { background: #3a8eef; }
-      #pause-screen .btn-restart { background: #555; }
-      #pause-screen .btn-restart:hover { background: #666; }
-      /* Game over */
-      #game-over-screen {
-        display: none;
-        position: absolute;
-        top: 0; left: 0; width: 100%; height: 100%;
-        background: rgba(0,0,0,0.85);
-        color: #fff;
-        flex-direction: column;
-        align-items: center;
-        justify-content: center;
-        pointer-events: auto;
+      #pause-screen .btn-restart, #continue-screen .btn-restart {
+        background: transparent;
+        color: var(--ink);
+        border: 1.5px solid var(--chip);
       }
-      #game-over-screen h1 { font-size: 48px; margin-bottom: 10px; }
-      #game-over-screen p { font-size: 24px; margin-bottom: 8px; }
-      #game-over-screen .best-line { font-size: 16px; color: rgba(255,255,255,0.5); margin-bottom: 6px; }
+      #game-over-screen p { font-size: 24px; margin-bottom: 8px; font-variant-numeric: tabular-nums; }
+      #game-over-screen .best-line { font-size: 15px; color: var(--muted); margin-bottom: 6px; }
+      #game-over-screen button { margin-top: 12px; }
       #new-best {
         display: none;
-        font-size: 20px;
-        font-weight: 900;
-        color: #ffe055;
-        text-shadow: 0 0 12px rgba(255,224,85,0.6);
-        margin-bottom: 16px;
-        animation: best-pulse 0.6s ease-in-out infinite alternate;
+        font-size: 15px;
+        font-weight: 700;
+        letter-spacing: 1.5px;
+        color: var(--coral);
+        margin-bottom: 14px;
       }
-      @keyframes best-pulse {
-        from { transform: scale(1); }
-        to   { transform: scale(1.12); }
-      }
-      #game-over-screen button {
-        font-size: 20px;
-        padding: 12px 32px;
-        border: none;
-        border-radius: 6px;
-        background: #4a9eff;
-        color: #fff;
-        cursor: pointer;
-        margin-top: 10px;
-      }
-      #game-over-screen button:hover { background: #3a8eef; }
-      /* Score popups */
+      #run-stats { font-size: 15px; line-height: 1.4; color: var(--muted); margin-bottom: 6px; max-width: 34em; }
+      .recap-item { white-space: nowrap; }
+      #daily-result { display: none; font-size: 15px; color: var(--ink); margin-bottom: 8px; }
+      .retry-hint { font-size: 13px; color: var(--muted); margin-top: 14px; }
+
+      /* ─── Score popups ────────────────────────────────────────────
+         Ink on paper, coral for a chain. No glow. */
       .score-popup {
         position: absolute;
         pointer-events: none;
-        font-weight: 900;
-        font-size: 22px;
-        color: #ffe055;
-        text-shadow: 0 0 6px rgba(255,224,85,0.7), 0 1px 2px rgba(0,0,0,0.5);
+        font-weight: 700;
+        font-size: 20px;
+        font-variant-numeric: tabular-nums;
+        color: var(--ink);
         animation: score-float 0.9s ease-out forwards;
         z-index: 10;
         white-space: nowrap;
       }
-      .score-popup.combo {
-        font-size: 30px;
-        color: #ff6ef5;
-        text-shadow: 0 0 10px rgba(255,110,245,0.8), 0 0 20px rgba(255,110,245,0.4);
-      }
-      .score-popup.row-clear {
-        font-size: 28px;
-        color: #4f4;
-        text-shadow: 0 0 10px rgba(68,255,68,0.8), 0 0 20px rgba(68,255,68,0.4);
-      }
+      .score-popup.combo { font-size: 26px; color: var(--coral); }
+      .score-popup.row-clear { font-size: 24px; color: var(--teal); }
       @keyframes score-float {
         0%   { opacity: 1; transform: translateY(0) scale(1.2); }
         30%  { opacity: 1; transform: translateY(-20px) scale(1); }
         100% { opacity: 0; transform: translateY(-60px) scale(0.8); }
       }
-      /* Level-up announcement */
-      #level-up {
+
+      /* ─── Announcer ───────────────────────────────────────────────
+         One line, 700 weight, centred on --announce-y; one banner at a
+         time (see the announcer queue in hud.js). */
+      #chain-counter, #level-up, #row-clear, #clutch-banner {
         display: none;
         position: absolute;
-        top: 40%;
+        top: var(--announce-y);
         left: 50%;
         transform: translate(-50%, -50%);
-        font-size: 42px;
-        font-weight: 900;
-        color: #7bf;
-        text-shadow: 0 0 20px rgba(119,187,255,0.7), 0 0 40px rgba(119,187,255,0.3);
+        font-weight: 700;
+        letter-spacing: 0.02em;
+        line-height: 1.05;
+        white-space: nowrap;
+        text-align: center;
         pointer-events: none;
-        z-index: 15;
-        animation: lvlup 1.4s ease-out forwards;
       }
+      #chain-counter { font-size: 40px; color: var(--coral); z-index: 14; }
+      #level-up { font-size: 40px; color: var(--ink); z-index: 15; }
+      #level-up .banner-sub { font-size: 15px; letter-spacing: 0.3em; margin-top: 6px; color: var(--muted); }
+      #row-clear { font-size: 32px; color: var(--teal); z-index: 15; }
+      #clutch-banner { font-size: 36px; color: var(--teal); z-index: 16; }
       @keyframes lvlup {
-        0%   { opacity: 0; transform: translate(-50%, -50%) scale(0.5); }
-        15%  { opacity: 1; transform: translate(-50%, -50%) scale(1.1); }
+        0%   { opacity: 0; transform: translate(-50%, -50%) scale(0.85); }
+        15%  { opacity: 1; transform: translate(-50%, -50%) scale(1.04); }
         30%  { opacity: 1; transform: translate(-50%, -50%) scale(1); }
         75%  { opacity: 1; }
-        100% { opacity: 0; transform: translate(-50%, -60%) scale(0.9); }
-      }
-      /* Row clear banner */
-      #row-clear {
-        display: none;
-        position: absolute;
-        top: 48%;
-        left: 50%;
-        transform: translate(-50%, -50%);
-        font-size: 34px;
-        font-weight: 900;
-        color: #4f4;
-        text-shadow: 0 0 15px rgba(68,255,68,0.7), 0 0 30px rgba(68,255,68,0.3);
-        pointer-events: none;
-        z-index: 15;
-        white-space: nowrap;
+        100% { opacity: 0; transform: translate(-50%, -60%) scale(0.96); }
       }
       @keyframes rowclear {
-        0%   { opacity: 0; transform: translate(-50%, -50%) scaleX(0.3); }
-        15%  { opacity: 1; transform: translate(-50%, -50%) scaleX(1.1); }
+        0%   { opacity: 0; transform: translate(-50%, -50%) scaleX(0.6); }
+        15%  { opacity: 1; transform: translate(-50%, -50%) scaleX(1.04); }
         25%  { opacity: 1; transform: translate(-50%, -50%) scaleX(1); }
         70%  { opacity: 1; }
         100% { opacity: 0; }
       }
-      /* Wall advance warning flash */
+      @keyframes chain-pop {
+        0%   { opacity: 0; transform: translate(-50%, -50%) scale(0.6); }
+        15%  { opacity: 1; transform: translate(-50%, -50%) scale(1.12); }
+        30%  { transform: translate(-50%, -50%) scale(1); }
+        80%  { opacity: 1; }
+        100% { opacity: 0; transform: translate(-50%, -60%) scale(0.85); }
+      }
+
+      /* Wall advance warning: the screen edge pulses coral */
       #wall-warning {
         position: absolute;
         top: 0; left: 0; width: 100%; height: 100%;
         pointer-events: none;
         border: 3px solid transparent;
-        box-sizing: border-box;
         transition: border-color 0.15s;
         z-index: 5;
       }
-      #wall-warning.active {
-        border-color: rgba(255, 34, 34, 0.6);
-        animation: warn-pulse 0.6s ease-in-out infinite;
-      }
+      #wall-warning.active { animation: warn-pulse 0.6s ease-in-out infinite; }
       @keyframes warn-pulse {
-        0%, 100% { border-color: rgba(255, 34, 34, 0.15); }
-        50%      { border-color: rgba(255, 34, 34, 0.6); }
-      }
-      /* Chain counter */
-      #chain-counter {
-        display: none;
-        position: absolute;
-        top: 28%;
-        left: 50%;
-        transform: translate(-50%, -50%);
-        font-size: 56px;
-        font-weight: 900;
-        pointer-events: none;
-        z-index: 14;
-        color: #ff6ef5;
-        text-shadow: 0 0 20px rgba(255,110,245,0.8), 0 0 40px rgba(255,110,245,0.3);
-      }
-      @keyframes chain-pop {
-        0%   { opacity: 0; transform: translate(-50%, -50%) scale(0.5); }
-        15%  { opacity: 1; transform: translate(-50%, -50%) scale(1.3); }
-        30%  { transform: translate(-50%, -50%) scale(1); }
-        80%  { opacity: 1; }
-        100% { opacity: 0; transform: translate(-50%, -60%) scale(0.7); }
+        0%, 100% { border-color: rgba(242, 95, 92, 0.15); }
+        50%      { border-color: rgba(242, 95, 92, 0.6); }
       }
       /* Flash overlay */
       #flash-overlay {
@@ -309,7 +313,7 @@
         z-index: 4;
         transition: opacity 0.05s;
       }
-      /* Danger vignette — heartbeat red edges when cubes near the front */
+      /* Danger vignette — coral edges when cubes near the front */
       #danger-vignette {
         position: absolute;
         top: 0; left: 0; width: 100%; height: 100%;
@@ -317,52 +321,39 @@
         z-index: 6;
         opacity: 0;
         transition: opacity 0.4s;
-        box-shadow: inset 0 0 120px rgba(255, 20, 20, 0.45);
+        box-shadow: inset 0 0 110px rgba(242, 95, 92, 0.4);
       }
       body.danger #danger-vignette {
         opacity: 1;
         animation: danger-pulse 0.9s ease-in-out infinite;
       }
       @keyframes danger-pulse {
-        0%, 100% { box-shadow: inset 0 0 100px rgba(255, 20, 20, 0.3); }
-        50%      { box-shadow: inset 0 0 160px rgba(255, 20, 20, 0.55); }
+        0%, 100% { box-shadow: inset 0 0 90px rgba(242, 95, 92, 0.28); }
+        50%      { box-shadow: inset 0 0 140px rgba(242, 95, 92, 0.5); }
       }
-      /* Clutch save banner */
-      #clutch-banner {
-        display: none;
-        position: absolute;
-        top: 42%;
-        left: 50%;
-        transform: translate(-50%, -50%);
-        font-size: 40px;
-        font-weight: 900;
-        color: #66ffe0;
-        text-shadow: 0 0 18px rgba(102,255,224,0.8), 0 0 40px rgba(102,255,224,0.4);
-        pointer-events: none;
-        z-index: 16;
-        white-space: nowrap;
-      }
-      /* Game-over extras */
-      #run-stats { font-size: 15px; color: rgba(255,255,255,0.65); margin-bottom: 6px; }
-      #daily-result { display: none; font-size: 15px; color: #ffd166; margin-bottom: 8px; }
-      .retry-hint { font-size: 13px; color: rgba(255,255,255,0.4); margin-top: 14px; }
     </style>
   </head>
   <body>
     <div id="ui">
       <div id="topbar">
         <div class="bar-slot left">
-          <div id="hold-preview"></div>
-          <span class="bar-caption">HOLD</span>
+          <div class="hold-col">
+            <div id="hold-preview"></div>
+            <span class="bar-caption">HOLD</span>
+          </div>
+          <div id="glyph-col">
+            <button id="pause-btn" class="glyph-btn" aria-label="Pause">
+              <svg viewBox="0 0 16 16" aria-hidden="true"><rect x="4" y="3" width="2.6" height="10" rx="1"/><rect x="9.4" y="3" width="2.6" height="10" rx="1"/></svg>
+            </button>
+            <button id="daily-btn" class="glyph-btn" aria-label="Daily challenge">
+              <svg viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke-width="1.5"><rect x="2.5" y="3.5" width="11" height="10" rx="2"/><path d="M2.5 6.5h11M5.5 2v3M10.5 2v3"/><circle cx="8" cy="10" r="1.3" stroke="none"/></svg>
+            </button>
+          </div>
         </div>
-        <div class="bar-slot">
+        <div class="bar-slot center">
           <strong id="score-val">0</strong>
           <span id="score-sub">Best <strong id="best-val">0</strong> · <span id="level-val">Level 1</span></span>
           <span id="daily-indicator" hidden>DAILY RUN</span>
-          <div id="glyph-row">
-            <button id="pause-btn" class="glyph-btn" aria-label="Pause">| |</button>
-            <button id="daily-btn" class="glyph-btn" aria-label="Daily challenge">&#128197;</button>
-          </div>
         </div>
         <div class="bar-slot right">
           <div id="queue-preview">
@@ -379,6 +370,7 @@
       <div id="clutch-banner"></div>
       <div id="flash-overlay"></div>
       <div id="wall-warning"></div>
+      <div id="announcer"></div>
       <div id="chain-counter"></div>
       <div id="level-up"></div>
       <div id="row-clear"></div>
@@ -386,6 +378,13 @@
         <h1>PAUSED</h1>
         <button id="resume-btn">Resume</button>
         <button id="pause-restart-btn" class="btn-restart">Restart</button>
+        <button id="mute-btn" class="btn-restart" aria-pressed="false">Sound: on</button>
+      </div>
+      <div id="continue-screen">
+        <h1>WELCOME BACK</h1>
+        <p class="continue-sub">Your run is where you left it.</p>
+        <button id="continue-btn">Continue</button>
+        <button id="new-run-btn" class="btn-restart">New run</button>
       </div>
       <div id="game-over-screen">
         <h1>GAME OVER</h1>

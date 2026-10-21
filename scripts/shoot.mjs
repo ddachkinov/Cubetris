@@ -9,6 +9,13 @@
 //
 // Exits non-zero if any page throws or logs a console error, or if a scene
 // fails its own check (the chain must reach x2, the level-up must land, ...).
+//
+// A scene whose page stops responding is retried once in a fresh browser.
+// Headless Chromium here intermittently loses the reply to a font lookup:
+// the renderer's main thread waits forever in FontServiceThread::
+// MatchFamilyName while the browser's font service sits idle (seen with
+// gdb, a few percent of runs). A real hang in the game is deterministic
+// under the seeded harness and stalls the retry too, which fails.
 
 import { mkdir, readdir, rm } from 'node:fs/promises';
 import path from 'node:path';
@@ -307,6 +314,31 @@ const SCENES = [
 ];
 
 // ─── Runner ──────────────────────────────────────────────────────────────────
+const SCENE_TIMEOUT_MS = 90_000;
+
+class Stalled extends Error {}
+
+function withTimeout(promise, ms, what) {
+  let timer;
+  const stall = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Stalled(`${what} stopped responding for ${ms / 1000} s`)), ms);
+  });
+  return Promise.race([promise, stall]).finally(() => clearTimeout(timer));
+}
+
+// Headless Chromium has no GPU; SwiftShader gives three.js a WebGL context
+function launch() {
+  return chromium.launch({
+    args: ['--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist'],
+  });
+}
+
+// A browser whose page is wedged may not close cleanly either; Playwright
+// kills whatever is left of it when the harness exits
+async function discard(browser) {
+  await withTimeout(browser.close(), 10_000, 'browser.close').catch(() => {});
+}
+
 async function runScene(browser, baseUrl, scene, errors) {
   const context = await browser.newContext(scene.device || PHONE);
   // Math.random is replaced with a fixed-seed PRNG before the game loads, so
@@ -350,10 +382,7 @@ async function main() {
   await server.listen();
   const baseUrl = server.resolvedUrls.local[0];
 
-  // Headless Chromium has no GPU; SwiftShader gives three.js a WebGL context
-  const browser = await chromium.launch({
-    args: ['--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist'],
-  });
+  let browser = await launch();
 
   const errors = [];
   let failed = 0;
@@ -361,7 +390,17 @@ async function main() {
     for (const scene of scenes) {
       const t0 = Date.now();
       try {
-        const note = await runScene(browser, baseUrl, scene, errors);
+        let note;
+        try {
+          note = await withTimeout(runScene(browser, baseUrl, scene, errors), SCENE_TIMEOUT_MS, scene.name);
+        } catch (err) {
+          if (!(err instanceof Stalled)) throw err;
+          console.log(`     ${scene.name}: ${err.message}; retrying once in a fresh browser`);
+          await discard(browser);
+          browser = await launch();
+          note = await withTimeout(runScene(browser, baseUrl, scene, errors), SCENE_TIMEOUT_MS, scene.name);
+          note = `${note ? `${note}; ` : ''}passed on retry`;
+        }
         const secs = ((Date.now() - t0) / 1000).toFixed(1);
         console.log(`ok   ${scene.name}.png  ${secs}s${note ? `  (${note})` : ''}`);
       } catch (err) {
@@ -370,7 +409,7 @@ async function main() {
       }
     }
   } finally {
-    await browser.close();
+    await discard(browser);
     await server.close();
   }
 

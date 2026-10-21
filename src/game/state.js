@@ -60,17 +60,25 @@ export const state = {
 
 // ─── Save / restore ──────────────────────────────────────────────────────────
 // A run as plain JSON, enough to put it back exactly as it was between
-// shots. What is in flight (a cube mid-air, a cascade mid-step) is not
-// saved, so save only when neither is; tweens, particles and the camera
-// shake are cosmetic and start fresh. A run on Math.random saves no RNG
-// state and resumes on Math.random.
-const SAVE_VERSION = 2;
+// shots. What is in flight (a cube mid-air, a cascade mid-step, a shot
+// buffered to go after them) is not saved, so save only when the run is not
+// busy; tweens, particles and the camera shake are cosmetic and start
+// fresh. Version 2 stores both random streams of a Daily (the queue's and
+// the wall's, see dailyRngs); a run on Math.random saves no RNG state and
+// resumes on Math.random.
+export const SAVE_VERSION = 2;
+
+// A shot in flight, a cascade still resolving, or a shot buffered to go
+// after them. The debug hook's `busy` is the same test.
+export function isBusy(s = state) {
+  return !!(s.shootingCube || s.cascade || s.queuedShot);
+}
 
 const rngState = (rng) => (rng.state ? rng.state() : null);
 const resumeRng = (saved) => (saved === null ? Math.random : mulberry32(saved));
 
 export function serialize(s = state) {
-  if (s.shootingCube || s.cascade) throw new Error('serialize: a shot or cascade is still resolving');
+  if (isBusy(s)) throw new Error('serialize: a shot or cascade is still resolving');
   return {
     v: SAVE_VERSION,
     level: s.level,

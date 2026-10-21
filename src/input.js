@@ -10,7 +10,7 @@ import { playTickSound } from './audio/sfx.js';
 import { camera, BOARD_BOUNDS } from './render/camera.js';
 import { CUBE_SIZE, COL_CELL } from './render/scene.js';
 import { updateSpawnCube, updateColumnHighlight, updateGhost, popSpawnCube } from './render/cubes.js';
-import { hapticPulse } from './ui/haptics.js';
+import { haptic } from './platform/haptics.js';
 import { dismissHint } from './ui/hud.js';
 
 // The tap that ends a run must not immediately start the next one
@@ -24,7 +24,7 @@ function moveToColumn(newCol) {
   updateColumnHighlight();
   updateGhost();
   popSpawnCube();
-  hapticPulse(12);
+  haptic('select');
   playTickSound();
 }
 
@@ -63,11 +63,15 @@ function laneFromPointer(clientX, clientY) {
   return Math.max(0, Math.min(GRID_COLS - 1, Math.round(aimPoint.x / COL_CELL)));
 }
 
-// actions: { shoot, holdSwap, togglePause, restartGame(asDaily) }
-export function initInput({ shoot, holdSwap, togglePause, restartGame }) {
+// actions: { shoot, holdSwap, togglePause, restartGame(asDaily), toggleSound }
+export function initInput({ shoot, holdSwap, togglePause, restartGame, toggleSound }) {
   window.addEventListener('keydown', (e) => {
     if (e.code === 'Escape') {
       if (!state.gameOver) togglePause();
+      return;
+    }
+    if (e.code === 'KeyM') {
+      toggleSound();
       return;
     }
     // Instant retry — the restart loop IS the addiction loop
@@ -148,6 +152,7 @@ export function initInput({ shoot, holdSwap, togglePause, restartGame }) {
   document.getElementById('pause-restart-btn').addEventListener('click', () => restartGame());
   document.getElementById('restart-btn').addEventListener('click', () => restartGame(false));
   document.getElementById('hold-preview').addEventListener('click', () => holdSwap());
+  document.getElementById('mute-btn').addEventListener('click', () => toggleSound());
 
   // Daily challenge — same seeded board for everyone, resets each calendar day
   document.getElementById('daily-btn').addEventListener('click', () => {

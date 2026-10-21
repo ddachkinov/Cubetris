@@ -10,6 +10,7 @@
 
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { chooseLane } from './bot.mjs';
 import { launchBrowser, openGame, startHarness } from './vclock.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -246,6 +247,139 @@ const CHECKS = [
       if (!same(a.grid, b.grid) || a.score !== b.score) diffs.push('final boards');
       check(!diffs.length, `the two timings differ in ${diffs.join('; ')}`);
       return `third shot at frame 300 or 700: same ${a.hands.length} hands, same ${a.walls.length} wall rows, same board`;
+    },
+  },
+  {
+    // W2-B: a run is saved on every wall advance, once nothing is in flight,
+    // and a reload offers Continue and puts back exactly that run. The bot
+    // plays five shots of today's Daily, then leaves the board to the wall
+    // (a bot that keeps clearing keeps levelling up, and every level-up's
+    // breather holds the wall off) until it has been saved twice. Each save
+    // must equal the live run at the frame it was written. After a reload
+    // the Continue screen must be up with exactly the run that was left
+    // (serialize() equal field for field), and Continue must play it on.
+    name: 'continue-after-reload',
+    async run(page) {
+      await page.evaluate(() => window.__replay.run(1, [{ f: window.__replay.frame, click: '#daily-btn' }]));
+      const saves = [];
+      for (let turn = 0; saves.length < 2 && turn < 60; turn++) {
+        if (turn < 5) {
+          const { grid, cur } = await page.evaluate(() => ({ grid: window.__hs.grid, cur: window.__hs.cur }));
+          const col = chooseLane(grid, cur.color);
+          check(col !== null, 'the bot ran out of lanes');
+          await page.evaluate((c) => window.__hs.setCur({ col: c }), col);
+          await press(page, 'Space');
+        }
+        // 40 frames, watching for a save on every one
+        const seen = await page.evaluate(() => {
+          const out = [];
+          for (let i = 0; i < 40; i++) {
+            const before = localStorage.getItem('hueshot-run');
+            window.__replay.run(1);
+            const after = localStorage.getItem('hueshot-run');
+            if (after && after !== before) {
+              out.push({
+                frame: window.__replay.frame,
+                busy: window.__hs.busy,
+                saved: JSON.parse(after),
+                live: window.__hs.busy ? null : window.__hs.serialize(),
+              });
+            }
+          }
+          return out;
+        });
+        saves.push(...seen);
+        check(!(await hs(page)).gameOver, 'the run ended before two saves');
+      }
+      check(saves.length >= 2, `${saves.length} saves in 2400 frames`);
+      for (const s of saves) {
+        check(!s.busy, `a save was written at frame ${s.frame} while a shot or cascade was in flight`);
+        check(same(s.saved.run, s.live), `the save at frame ${s.frame} is not the run at that frame`);
+      }
+      // Leaving the page saves the run once more (pagehide), so what comes
+      // back is the run as it was at the moment of the reload
+      await settle(page);
+      const live = await page.evaluate(() => window.__hs.serialize());
+
+      await page.reload();
+      await page.waitForFunction(() => window.__hs && window.__replay, null, { timeout: 15_000 });
+      await step(page, 2);
+      const offered = await page.evaluate(() => getComputedStyle(document.getElementById('continue-screen')).display !== 'none');
+      check(offered, 'no Continue screen after a reload with a saved run');
+      // The restored run waits, paused, on the Continue screen: it must be
+      // the saved run to the last field
+      const restored = await page.evaluate(() => window.__hs.serialize());
+      const differ = Object.keys(live).filter((k) => !same(restored[k], live[k]));
+      check(!differ.length, `the restored run differs from the one left in ${differ.join(', ')}`);
+      check(await page.evaluate(() => window.__hs.paused), 'the restored run is not waiting for Continue');
+      await page.evaluate(() => window.__replay.run(1, [{ f: window.__replay.frame, click: '#continue-btn' }]));
+      // And Continue plays it on: the wall timer moves again
+      const t0 = await page.evaluate(() => window.__hs.wall.timer);
+      await step(page, 30);
+      const t1 = await page.evaluate(() => window.__hs.wall.timer);
+      check(t1 > t0, 'the restored run is not running after Continue');
+      return `${saves.length} wall-advance saves, each equal to the live run; reload -> Continue -> the same run (score ${live.score}, level ${live.level}, wall ${live.wallAdvanceTimer.toFixed(2)} s)`;
+    },
+  },
+  {
+    // W2-B: hiding the page suspends the audio and pauses the run, and
+    // showing it again does not play the steps missed meanwhile as a burst
+    // of notes. Real time here: the audio clock is not virtual.
+    name: 'hidden-tab-no-burst',
+    async run(page) {
+      // A real key press: audio may only start on user activation, which a
+      // dispatched event does not carry
+      await page.keyboard.press('Space');
+      await settle(page);
+      const audio = () => page.evaluate(() => ({ state: window.__hsAudio.ctx.state, running: window.__hsAudio.music.running }));
+      // Wait (real time) for an audio condition, saying which one failed.
+      // Polled on a timer: requestAnimationFrame only fires here when the
+      // virtual clock is stepped.
+      const until = async (what, fn) => {
+        try {
+          await page.waitForFunction(fn, null, { timeout: 10_000, polling: 50 });
+        } catch {
+          throw new Error(`timed out waiting for ${what} (audio: ${JSON.stringify(await audio())})`);
+        }
+      };
+      await until('the audio to start', () => window.__hsAudio.ctx.state === 'running' && window.__hsAudio.music.running);
+      await page.evaluate(() => {
+        const a = window.__hsAudio;
+        window.__notes = [];
+        const play = a.music._playStep.bind(a.music);
+        a.music._playStep = (s, time) => {
+          window.__notes.push({ time, at: a.ctx.currentTime });
+          play(s, time);
+        };
+      });
+      await page.waitForTimeout(500);
+      check(await page.evaluate(() => window.__notes.length) > 0, 'no music was scheduled before hiding');
+
+      const setHidden = (h) => page.evaluate((hidden) => {
+        Object.defineProperty(document, 'hidden', { configurable: true, get: () => hidden });
+        Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => (hidden ? 'hidden' : 'visible') });
+        document.dispatchEvent(new Event('visibilitychange'));
+      }, h);
+
+      await setHidden(true);
+      await until('the audio to suspend', () => window.__hsAudio.ctx.state === 'suspended');
+      const paused = await page.evaluate(() => document.getElementById('pause-screen').style.display === 'flex');
+      check(paused, 'hiding the page did not pause the run');
+      const a1 = await audio();
+      check(!a1.running, 'the music scheduler kept running while hidden');
+      const n0 = await page.evaluate(() => window.__notes.length);
+      await page.waitForTimeout(2_000);
+      check(await page.evaluate(() => window.__notes.length) === n0, 'notes were scheduled while hidden');
+
+      await setHidden(false);
+      await until('the audio to resume', () => window.__hsAudio.ctx.state === 'running' && window.__hsAudio.music.running);
+      await page.waitForTimeout(300);
+      const after = await page.evaluate((from) => window.__notes.slice(from), n0);
+      const late = after.filter((n) => n.time < n.at - 0.001);
+      // 300 ms of music is ~3 16ths at 104 bpm, plus 120 ms of lookahead
+      check(late.length === 0, `${late.length} notes scheduled in the past after showing the page`);
+      check(after.length <= 6, `${after.length} notes in the first 300 ms after showing the page: a burst`);
+      return `hidden 2 s: suspended, paused, 0 notes; shown: ${after.length} notes in 300 ms, none late`;
     },
   },
 ];
