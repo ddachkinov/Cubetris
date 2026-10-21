@@ -1,9 +1,12 @@
 // ─── Scene ───────────────────────────────────────────────────────────────────
-// The renderer, the lights, and the static board: ground, grid lines and side
-// walls. Everything that moves lives in gameGroup.
+// The renderer, the lights, and the static board: the paper ground, the grid
+// lines, the danger floor and the far-wall slab. Everything that moves lives
+// in gameGroup.
 
 import * as THREE from 'three';
-import { GRID_COLS, GRID_ROWS } from '../game/rules.js';
+import { GRID_COLS, GRID_ROWS, wallInterval } from '../game/rules.js';
+import { state } from '../game/state.js';
+import { TINTS, currentTint, setTint, tintForTheme } from './palette.js';
 import { installFrameMeter } from './perf.js';
 
 export const CUBE_SIZE = 1;
@@ -12,7 +15,7 @@ export const DEPTH_CELL = CUBE_SIZE;
 export const FIELD_DEPTH = GRID_ROWS * DEPTH_CELL;
 
 export const scene = new THREE.Scene();
-scene.background = new THREE.Color(0x0a0a1a);
+scene.background = new THREE.Color(TINTS.dawn.ground);
 
 export const gridWidth = GRID_COLS * COL_CELL;
 export const centerX = gridWidth / 2 - COL_CELL / 2;
@@ -20,7 +23,8 @@ export const centerX = gridWidth / 2 - COL_CELL / 2;
 export const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-// No shadow map: nothing casts or receives one
+// No shadow map: nothing casts one. Cubes get a cheap contact shadow instead
+// (see cubes.js).
 document.body.insertBefore(renderer.domElement, document.getElementById('ui'));
 
 // Work that must see this frame's final positions (the instanced cubes copy
@@ -36,26 +40,22 @@ scene.onBeforeRender = () => {
 installFrameMeter(scene);
 
 // ─── Lighting ────────────────────────────────────────────────────────────────
-const ambientLight = new THREE.AmbientLight(0x8888cc, 0.4);
-scene.add(ambientLight);
+// Soft daylight on paper: a warm sky/ground fill and one key light from
+// above and behind the player's shoulder
+const hemiLight = new THREE.HemisphereLight(0xfffaf2, 0xcfc6b8, 1.9);
+scene.add(hemiLight);
 
-const dirLight = new THREE.DirectionalLight(0xffffff, 1.0);
-dirLight.position.set(centerX, 8, -2);
+const dirLight = new THREE.DirectionalLight(0xffffff, 1.6);
+dirLight.position.set(centerX - 3, 10, -4);
 dirLight.target.position.set(centerX, 0, FIELD_DEPTH / 2);
 scene.add(dirLight);
 scene.add(dirLight.target);
-
-const backLight = new THREE.PointLight(0x4466ff, 0.6, 35);
-backLight.position.set(centerX, 2, FIELD_DEPTH + 2);
-scene.add(backLight);
 
 // ─── Game group ──────────────────────────────────────────────────────────────
 export const gameGroup = new THREE.Group();
 scene.add(gameGroup);
 
-// Theme state — refs so applyEnvironment can recolor the board
-let groundMatRef = null;
-let gridLines = null;
+const FLOOR_Y = -CUBE_SIZE / 2;
 
 // ─── Coordinate mapping ─────────────────────────────────────────────────────
 export function colToX(col) {
@@ -95,113 +95,137 @@ export function disposeMesh(mesh) {
 }
 
 // ─── Ground plane ────────────────────────────────────────────────────────────
-const EXTRA_COLS = 2;
-const EXTRA_ROWS = 1;
+// Paper all the way to the horizon: the same colour as the background, so
+// its edge never shows
+const groundMat = new THREE.MeshBasicMaterial({ color: TINTS.dawn.ground });
 export function createGroundPlane() {
-  const totalWidth = gridWidth + EXTRA_COLS * 2 * COL_CELL + 4;
-  const totalDepth = FIELD_DEPTH + EXTRA_ROWS * DEPTH_CELL + 8;
-  const groundGeo = new THREE.PlaneGeometry(totalWidth, totalDepth);
-  const groundMat = new THREE.MeshLambertMaterial({ color: 0x111122 });
-  groundMatRef = groundMat;
-  const ground = new THREE.Mesh(groundGeo, groundMat);
+  const ground = new THREE.Mesh(new THREE.PlaneGeometry(80, 80), groundMat);
   ground.rotation.x = -Math.PI / 2;
-  ground.position.set(centerX, -CUBE_SIZE / 2, (FIELD_DEPTH + EXTRA_ROWS * DEPTH_CELL) / 2 - 1);
+  ground.position.set(centerX, FLOOR_Y - 0.002, FIELD_DEPTH / 2);
   gameGroup.add(ground);
 }
 
 // ─── Grid visual ─────────────────────────────────────────────────────────────
-// Every line on the board (lanes, rows, the extended side tracks, the side
-// walls and the red far-wall frame) is one LineSegments with a colour per
-// vertex: one draw call instead of ~50. Each segment is tagged core, fade or
-// wall so applyEnvironment can repaint them.
-const LINE_CORE = 0;
-const LINE_FADE = 1;
-const LINE_WALL = 2;
+// The lane and row lines on the board are one LineSegments: one draw call
+// instead of ~50 separate lines. The lane tints themselves are in cubes.js.
+const gridMat = new THREE.LineBasicMaterial({ color: TINTS.dawn.line });
 
 export function createGridVisual() {
-  const floorY = -CUBE_SIZE / 2 + 0.01;
+  const y = FLOOR_Y + 0.004;
+  const nearZ = -1.5;
+  const farZ = FIELD_DEPTH - DEPTH_CELL / 2;
+  const leftX = -COL_CELL / 2;
+  const rightX = GRID_COLS * COL_CELL - COL_CELL / 2;
   const positions = [];
-  const kinds = [];
-  const seg = (kind, x1, y1, z1, x2, y2, z2) => {
-    positions.push(x1, y1, z1, x2, y2, z2);
-    kinds.push(kind, kind);
-  };
-
-  const farZ = FIELD_DEPTH + EXTRA_ROWS * DEPTH_CELL + 1;
-  const coreLeftX = -COL_CELL / 2;
-  const coreRightX = GRID_COLS * COL_CELL - COL_CELL / 2;
-  const extLeftX = coreLeftX - EXTRA_COLS * COL_CELL;
-  const extRightX = coreRightX + EXTRA_COLS * COL_CELL;
-
-  for (let i = 1; i <= EXTRA_COLS; i++) {
-    seg(LINE_FADE, coreLeftX - i * COL_CELL, floorY, -2, coreLeftX - i * COL_CELL, floorY, farZ);
-    seg(LINE_FADE, coreRightX + i * COL_CELL, floorY, -2, coreRightX + i * COL_CELL, floorY, farZ);
-  }
   for (let c = 0; c <= GRID_COLS; c++) {
     const x = c * COL_CELL - COL_CELL / 2;
-    seg(LINE_CORE, x, floorY, -2, x, floorY, farZ);
+    positions.push(x, y, nearZ, x, y, farZ);
   }
-
-  const totalRows = GRID_ROWS + EXTRA_ROWS;
-  for (let r = 0; r <= totalRows; r++) {
+  for (let r = 0; r <= GRID_ROWS; r++) {
     const z = r * DEPTH_CELL - DEPTH_CELL / 2;
-    seg(r <= GRID_ROWS ? LINE_CORE : LINE_FADE, extLeftX, floorY, z, extRightX, floorY, z);
+    positions.push(leftX, y, z, rightX, y, z);
   }
-
-  // Side walls share the theme's core grid color
-  const wallHeight = CUBE_SIZE * 2;
-  for (const x of [coreLeftX, coreRightX]) {
-    for (let r = 0; r <= GRID_ROWS; r += 2) {
-      seg(LINE_CORE, x, floorY, r * DEPTH_CELL, x, floorY + wallHeight, r * DEPTH_CELL);
-    }
-    seg(LINE_CORE, x, floorY + wallHeight, -2, x, floorY + wallHeight, FIELD_DEPTH + 1);
-  }
-
-  // The far wall's frame
-  const wallZ = (GRID_ROWS - 1) * DEPTH_CELL + DEPTH_CELL / 2;
-  seg(LINE_WALL, coreLeftX, floorY, wallZ, coreRightX, floorY, wallZ);
-  seg(LINE_WALL, coreLeftX, floorY, wallZ, coreLeftX, floorY + wallHeight, wallZ);
-  seg(LINE_WALL, coreLeftX, floorY + wallHeight, wallZ, coreRightX, floorY + wallHeight, wallZ);
-  seg(LINE_WALL, coreRightX, floorY + wallHeight, wallZ, coreRightX, floorY, wallZ);
-
   const geo = new THREE.BufferGeometry();
   geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
-  geo.setAttribute('color', new THREE.Float32BufferAttribute(new Float32Array(kinds.length * 3), 3));
-  gridLines = new THREE.LineSegments(geo, new THREE.LineBasicMaterial({ vertexColors: true }));
-  gridLines.userData.kinds = kinds;
-  gameGroup.add(gridLines);
-  paintGridLines(0x5566aa, 0x334466, 0xff2222);
+  gameGroup.add(new THREE.LineSegments(geo, gridMat));
 }
 
-function paintGridLines(core, fade, wall) {
-  if (!gridLines) return;
-  const colors = [new THREE.Color(core), new THREE.Color(fade), new THREE.Color(wall)];
-  const attr = gridLines.geometry.getAttribute('color');
-  gridLines.userData.kinds.forEach((kind, i) => {
-    const c = colors[kind];
-    attr.setXYZ(i, c.r, c.g, c.b);
-  });
-  attr.needsUpdate = true;
+// ─── Wall progress ───────────────────────────────────────────────────────────
+// 0 just after an advance (or during a level-up breather), 1 when the wall
+// is due
+function wallProgress() {
+  if (!state.wallStarted || state.gameOver) return 0;
+  return THREE.MathUtils.clamp(state.wallAdvanceTimer / wallInterval(state.level), 0, 1);
 }
 
-// Background, ground and grid lines for a theme (the cube palette is separate)
+// ─── Danger floor ────────────────────────────────────────────────────────────
+// Rows 0-2, where a cube ends the run, are tinted; the tint deepens from 0 to
+// 60% as the wall timer runs down, and holds at 60% while a cube is in them
+const DANGER_ROWS = 3;
+const dangerMat = new THREE.MeshBasicMaterial({
+  color: TINTS.dawn.danger,
+  transparent: true,
+  opacity: 0,
+  depthWrite: false,
+});
+const dangerGeo = new THREE.PlaneGeometry(gridWidth, DANGER_ROWS * DEPTH_CELL);
+dangerGeo.rotateX(-Math.PI / 2);
+const dangerFloor = new THREE.Mesh(dangerGeo, dangerMat);
+dangerFloor.position.set(centerX, FLOOR_Y + 0.002, (DANGER_ROWS * DEPTH_CELL) / 2 - DEPTH_CELL / 2);
+dangerFloor.renderOrder = 0;
+gameGroup.add(dangerFloor);
+
+// ─── Wall slab ───────────────────────────────────────────────────────────────
+// The far wall is a solid slab behind the last row. Over each interval it
+// creeps toward the board, and when the wall advances it is right behind the
+// row that slides in; then it eases back. The wall timer runs along its base.
+const SLAB_HEIGHT = 1.25;
+const SLAB_DEPTH = 0.45;
+const SLAB_REST_GAP = 0.9; // how far back it sits just after an advance
+// Front face when the wall is due: right behind where a new row appears
+const SLAB_DUE_FRONT = rowToZ(GRID_ROWS - 1) + DEPTH_CELL * 1.5;
+const slabMat = new THREE.MeshStandardMaterial({ color: TINTS.dawn.slab, roughness: 0.9, metalness: 0 });
+const slab = new THREE.Mesh(new THREE.BoxGeometry(gridWidth + 0.4, SLAB_HEIGHT, SLAB_DEPTH), slabMat);
+slab.position.set(centerX, FLOOR_Y + SLAB_HEIGHT / 2, SLAB_DUE_FRONT + SLAB_REST_GAP + SLAB_DEPTH / 2);
+gameGroup.add(slab);
+
+const timerMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
+const timerBar = new THREE.Mesh(new THREE.PlaneGeometry(1, 0.1), timerMat);
+// On the slab's front face (which looks toward the player, -z), at its base
+timerBar.rotation.y = Math.PI;
+timerBar.position.set(0, -SLAB_HEIGHT / 2 + 0.12, -SLAB_DEPTH / 2 - 0.002);
+slab.add(timerBar);
+
+const TIMER_IMMINENT_S = 3;
+const TIMER_CALM = new THREE.Color(0xf3eee6);
+const TIMER_IMMINENT = new THREE.Color(0xf25f5c);
+let lastFrameAt = performance.now();
+
+function updateBoard() {
+  const now = performance.now();
+  const dt = Math.min(0.05, (now - lastFrameAt) / 1000);
+  lastFrameAt = now;
+
+  const progress = wallProgress();
+  const target = SLAB_DUE_FRONT + SLAB_REST_GAP * (1 - progress) + SLAB_DEPTH / 2;
+  // Ease, so the recoil after an advance is a motion rather than a jump
+  slab.position.z += (target - slab.position.z) * (1 - Math.exp(-dt * 12));
+
+  const interval = wallInterval(state.level);
+  const left = state.wallStarted ? 1 - progress : 1;
+  timerBar.scale.x = Math.max(0.001, left * gridWidth);
+  // Drains from the right, anchored at the left edge as seen from the player
+  timerBar.position.x = gridWidth / 2 - (left * gridWidth) / 2;
+  const imminent = state.wallStarted && !state.gameOver && (1 - progress) * interval <= TIMER_IMMINENT_S;
+  timerMat.color.copy(imminent ? TIMER_IMMINENT : TIMER_CALM);
+
+  dangerMat.opacity = 0.6 * Math.max(progress, state.dangerActive ? 1 : 0);
+}
+onBeforeRender(updateBoard);
+
+// ─── Theme ───────────────────────────────────────────────────────────────────
+// A theme picks a tint (palette.js): background, ground, lines, danger floor
+// and slab here; the cube colours through setPalette; the HUD through the
+// data-tint attribute its CSS keys on.
 export function applyEnvironment(theme) {
-  scene.background.setHex(theme.bg);
-  if (groundMatRef) groundMatRef.color.setHex(theme.ground);
-  paintGridLines(theme.gridCore, theme.gridFade, 0xff2222);
+  const tint = tintForTheme(theme);
+  setTint(tint);
+  scene.background.setHex(tint.ground);
+  groundMat.color.setHex(tint.ground);
+  gridMat.color.setHex(tint.line);
+  dangerMat.color.setHex(tint.danger);
+  slabMat.color.setHex(tint.slab);
+  hemiLight.groundColor.setHex(tint.floor);
+  document.documentElement.dataset.tint = tint.name.toLowerCase();
+  const meta = document.querySelector('meta[name="theme-color"]');
+  if (meta) meta.content = '#' + tint.ground.toString(16).padStart(6, '0');
 }
 
-// Lights react to the dynamic intensity (0-1)
+// Lights react to the dynamic intensity (0-1): a chain warms and brightens
+// the key light a little
 export function setIntensityLighting(intensityLevel) {
-  // Ambient light reacts to intensity
-  ambientLight.intensity = 0.4 + intensityLevel * 0.4;
-
-  // Directional light pulses
-  dirLight.intensity = 1.0 + intensityLevel * 0.5;
-
-  // Back light color shifts toward warm during intensity
-  const r = 0.27 + intensityLevel * 0.5;
-  const g = 0.4 - intensityLevel * 0.2;
-  const b = 1.0 - intensityLevel * 0.4;
-  backLight.color.setRGB(r, g, b);
+  dirLight.intensity = 1.6 + intensityLevel * 0.5;
+  dirLight.color.setRGB(1, 1 - intensityLevel * 0.08, 1 - intensityLevel * 0.18);
 }
+
+export { currentTint };

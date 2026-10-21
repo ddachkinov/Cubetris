@@ -17,13 +17,14 @@ import * as THREE from 'three';
 import { RAINBOW_INDEX, BOMB_INDEX } from '../game/rules.js';
 import { state } from '../game/state.js';
 import { playExplosionSound, playBounceSound } from '../audio/sfx.js';
-import { COLORS } from './palette.js';
+import { COLORS, RAINBOW_BASE, BOMB_BODY, BOMB_FUSE } from './palette.js';
 import { CUBE_SIZE, gameGroup, colToX, rowToZ, onBeforeRender, uploadIfChanged } from './scene.js';
 
 export const MAX_PARTICLES = 240;
 
 const geometry = new THREE.BoxGeometry(1, 1, 1);
-const material = new THREE.MeshLambertMaterial({ color: 0xffffff });
+// Matte, like the cubes they came from
+const material = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.9, metalness: 0 });
 
 const pool = new THREE.InstancedMesh(geometry, material, MAX_PARTICLES);
 pool.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(MAX_PARTICLES * 3), 3);
@@ -109,7 +110,7 @@ export function spawnParticles(col, row, colorIndex) {
     if (colorIndex === RAINBOW_INDEX) {
       pColor = COLORS[Math.floor(Math.random() * COLORS.length)];
     } else if (colorIndex === BOMB_INDEX) {
-      pColor = Math.random() < 0.5 ? 0xff6600 : 0xffcc00;
+      pColor = Math.random() < 0.5 ? BOMB_BODY : BOMB_FUSE;
     } else {
       pColor = COLORS[colorIndex];
     }
@@ -238,8 +239,8 @@ export function updateTrailParticles(dt) {
 export function emitShotTrail() {
   if (state.shootingCube) {
     const sc = state.shootingCube;
-    const trailColor = sc.colorIndex === RAINBOW_INDEX ? 0xffffff
-      : sc.colorIndex === BOMB_INDEX ? 0xff6600
+    const trailColor = sc.colorIndex === RAINBOW_INDEX ? RAINBOW_BASE
+      : sc.colorIndex === BOMB_INDEX ? BOMB_FUSE
       : COLORS[sc.colorIndex];
     if (Math.random() < 0.6) {
       spawnTrailParticle(sc.mesh.position.x, sc.mesh.position.y, sc.mesh.position.z, trailColor);

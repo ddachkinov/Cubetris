@@ -1,26 +1,36 @@
 // ─── Cubes ───────────────────────────────────────────────────────────────────
-// Cube meshes and everything drawn around the player's aim: the lane
-// highlight, the landing ghost and the spawn cube. Also the per-cube
-// animations: landing squash, wall-push and gravity tweens, and the rainbow
-// and bomb shimmer.
+// Cube meshes and everything drawn around the player's aim: the lane tints,
+// the landing ghost and the spawn cube. Also the per-cube animations:
+// landing squash, wall-push and gravity tweens, and the rainbow and bomb
+// shimmer.
 //
 // Every cube (the board, the one in flight and the one in hand) is drawn by
 // one InstancedMesh. What the game holds as a cube's "mesh" is a CubeProxy:
 // an Object3D with a position and scale like any mesh, which the game moves
 // and tweens as before. Right before each draw, syncCubes() copies every
-// live proxy into the instance buffers. One draw call for up to 86 cubes,
-// and placing or clearing a cube allocates nothing on the GPU.
+// live proxy into the instance buffers, along with its colour, its glyph and
+// its contact shadow. One draw call for up to 86 cubes (and one for their
+// shadows), and placing or clearing a cube allocates nothing on the GPU.
+//
+// The look is ceramic on paper: rounded, matte (MeshStandardMaterial,
+// roughness 0.9), a soft contact shadow under each cube, and an engraved
+// glyph on every face so no colour has to be told apart by hue alone.
 
 import * as THREE from 'three';
-import { RAINBOW_INDEX, BOMB_INDEX, landingRow } from '../game/rules.js';
+import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeometry.js';
+import { GRID_COLS, RAINBOW_INDEX, BOMB_INDEX, landingRow } from '../game/rules.js';
 import { state } from '../game/state.js';
-import { COLORS } from './palette.js';
+import { COLORS, RAINBOW_BASE, BOMB_BODY, BOMB_FUSE, currentTint } from './palette.js';
+import { createGlyphAtlas, GLYPH_CELLS } from './glyphs.js';
 import {
   CUBE_SIZE, COL_CELL, FIELD_DEPTH, gameGroup, colToX, rowToZ, onBeforeRender, uploadIfChanged,
 } from './scene.js';
 
 // 84 board cells, the shot in flight and the cube in hand, with room to spare
 const MAX_CUBES = 100;
+// A hair under a full cell, so neighbours read as separate tiles
+const CUBE_BODY = CUBE_SIZE * 0.94;
+const FLOOR_Y = -CUBE_SIZE / 2;
 
 const liveCubes = new Set();
 
@@ -38,11 +48,45 @@ class CubeProxy extends THREE.Object3D {
   }
 }
 
-const cubeMesh = new THREE.InstancedMesh(
-  new THREE.BoxGeometry(CUBE_SIZE, CUBE_SIZE, CUBE_SIZE),
-  new THREE.MeshLambertMaterial({ color: 0xffffff }),
-  MAX_CUBES
-);
+const cubeGeo = new RoundedBoxGeometry(CUBE_BODY, CUBE_BODY, CUBE_BODY, 3, 0.13);
+
+// ─── Cube material: matte ceramic with an engraved glyph ─────────────────────
+// aGlyph picks the atlas cell (the colour index). The glyph darkens the face
+// it sits on; the bomb's fuse is drawn in coral instead.
+const glyphAttr = new THREE.InstancedBufferAttribute(new Float32Array(MAX_CUBES), 1);
+glyphAttr.setUsage(THREE.DynamicDrawUsage);
+cubeGeo.setAttribute('aGlyph', glyphAttr);
+
+const glyphUniforms = {
+  glyphMap: { value: createGlyphAtlas() },
+  fuseColor: { value: new THREE.Color(BOMB_FUSE) },
+};
+
+const cubeMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.9, metalness: 0 });
+cubeMat.onBeforeCompile = (shader) => {
+  Object.assign(shader.uniforms, glyphUniforms);
+  shader.vertexShader = shader.vertexShader
+    .replace('#include <common>', '#include <common>\nattribute float aGlyph;\nvarying float vGlyph;\nvarying vec2 vGlyphUv;')
+    .replace('#include <begin_vertex>', '#include <begin_vertex>\nvGlyph = aGlyph;\nvGlyphUv = uv;');
+  shader.fragmentShader = shader.fragmentShader
+    .replace(
+      '#include <common>',
+      `#include <common>
+uniform sampler2D glyphMap;
+uniform vec3 fuseColor;
+varying float vGlyph;
+varying vec2 vGlyphUv;`
+    )
+    .replace(
+      '#include <color_fragment>',
+      `#include <color_fragment>
+float glyphInk = texture2D(glyphMap, vec2((vGlyph + vGlyphUv.x) / ${GLYPH_CELLS}.0, vGlyphUv.y)).r;
+vec3 ink = vGlyph > ${BOMB_INDEX - 0.5} ? fuseColor : diffuseColor.rgb * 0.58;
+diffuseColor.rgb = mix(diffuseColor.rgb, ink, glyphInk);`
+    );
+};
+
+const cubeMesh = new THREE.InstancedMesh(cubeGeo, cubeMat, MAX_CUBES);
 cubeMesh.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(MAX_CUBES * 3), 3);
 cubeMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
 cubeMesh.instanceColor.setUsage(THREE.DynamicDrawUsage);
@@ -50,6 +94,40 @@ cubeMesh.instanceColor.setUsage(THREE.DynamicDrawUsage);
 cubeMesh.frustumCulled = false;
 cubeMesh.count = 0;
 gameGroup.add(cubeMesh);
+
+// ─── Contact shadows ─────────────────────────────────────────────────────────
+// A soft dark blot on the floor under every cube, offset a little away from
+// the key light. Grounds the cubes on the paper for the price of one draw.
+function shadowTexture() {
+  const size = 64;
+  const canvas = document.createElement('canvas');
+  canvas.width = canvas.height = size;
+  const g = canvas.getContext('2d');
+  const grad = g.createRadialGradient(size / 2, size / 2, size * 0.18, size / 2, size / 2, size / 2);
+  grad.addColorStop(0, 'rgba(0,0,0,1)');
+  grad.addColorStop(1, 'rgba(0,0,0,0)');
+  g.fillStyle = grad;
+  g.fillRect(0, 0, size, size);
+  return new THREE.CanvasTexture(canvas);
+}
+
+const shadowGeo = new THREE.PlaneGeometry(1.5, 1.5);
+shadowGeo.rotateX(-Math.PI / 2);
+const shadowMat = new THREE.MeshBasicMaterial({
+  color: 0x000000,
+  map: shadowTexture(),
+  transparent: true,
+  opacity: 0.22,
+  depthWrite: false,
+});
+const shadowMesh = new THREE.InstancedMesh(shadowGeo, shadowMat, MAX_CUBES);
+shadowMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+shadowMesh.frustumCulled = false;
+shadowMesh.count = 0;
+shadowMesh.renderOrder = 1;
+gameGroup.add(shadowMesh);
+const SHADOW_Y = FLOOR_Y + 0.006;
+const SHADOW_OFFSET_Z = 0.12;
 
 export function createCubeMesh(colorIndex) {
   return new CubeProxy(colorIndex);
@@ -59,67 +137,98 @@ export function createCubeMesh(colorIndex) {
 let rainbowTime = 0;
 const tmpMatrix = new THREE.Matrix4();
 const tmpColor = new THREE.Color();
+const tmpPos = new THREE.Vector3();
+const tmpScale = new THREE.Vector3();
+const flatQuat = new THREE.Quaternion();
 
-function cubeColor(cube, out) {
-  if (cube.colorIndex === RAINBOW_INDEX) {
-    // Hue drifts with time and with the cube's place on the board
-    const hue = (rainbowTime * 0.5 + cube.position.x * 0.1 + cube.position.z * 0.05) % 1;
-    return out.setHSL(hue, 0.7, 0.7);
-  }
-  if (cube.colorIndex === BOMB_INDEX) {
-    const pulse = Math.sin(rainbowTime * 4) * 0.5 + 0.5;
-    return out.setHex(0xff6600).offsetHSL(0, 0, 0.12 * pulse);
-  }
-  return out.setHex(COLORS[cube.colorIndex]);
+// Hue drifts with time and with the cube's place on the board
+function rainbowHue(x, z) {
+  return (((rainbowTime * 0.5 + x * 0.1 + z * 0.05) % 1) + 1) % 1;
+}
+
+function cubeColor(colorIndex, x, z, out) {
+  if (colorIndex === RAINBOW_INDEX) return out.setHex(RAINBOW_BASE).lerp(tmpColor.setHSL(rainbowHue(x, z), 0.65, 0.62), 0.55);
+  if (colorIndex === BOMB_INDEX) return out.setHex(BOMB_BODY);
+  return out.setHex(COLORS[colorIndex]);
 }
 
 const staged = {
   matrix: new Float32Array(MAX_CUBES * 16),
   color: new Float32Array(MAX_CUBES * 3),
+  glyph: new Float32Array(MAX_CUBES),
+  shadow: new Float32Array(MAX_CUBES * 16),
 };
 
 function syncCubes() {
   let i = 0;
   for (const cube of liveCubes) {
     if (i >= MAX_CUBES) break;
-    tmpMatrix.compose(cube.position, cube.quaternion, cube.scale).toArray(staged.matrix, i * 16);
-    cubeColor(cube, tmpColor).toArray(staged.color, i * 3);
+    const { position: p, scale: s } = cube;
+    tmpMatrix.compose(p, cube.quaternion, s).toArray(staged.matrix, i * 16);
+    cubeColor(cube.colorIndex, p.x, p.z, tmpColor).toArray(staged.color, i * 3);
+    staged.glyph[i] = cube.colorIndex;
+
+    // The shadow stays on the floor and spreads as the cube squashes
+    tmpPos.set(p.x, SHADOW_Y, p.z + SHADOW_OFFSET_Z);
+    tmpScale.set(s.x, 1, s.z);
+    tmpMatrix.compose(tmpPos, flatQuat, tmpScale).toArray(staged.shadow, i * 16);
     i++;
   }
   uploadIfChanged(cubeMesh.instanceMatrix, staged.matrix, i * 16);
   uploadIfChanged(cubeMesh.instanceColor, staged.color, i * 3);
+  uploadIfChanged(glyphAttr, staged.glyph, i);
+  uploadIfChanged(shadowMesh.instanceMatrix, staged.shadow, i * 16);
   cubeMesh.count = i;
+  shadowMesh.count = i;
   // An InstancedMesh with count 0 would still issue a (zero-instance) draw
-  cubeMesh.visible = i > 0;
+  cubeMesh.visible = shadowMesh.visible = i > 0;
+
+  // The bomb's fuse glows on and off
+  const pulse = Math.sin(rainbowTime * 4) * 0.5 + 0.5;
+  glyphUniforms.fuseColor.value.setHex(BOMB_FUSE).lerp(tmpColor.setHex(0xffd27a), pulse * 0.6);
+  shadowMat.opacity = currentTint.shadow;
 }
 onBeforeRender(syncCubes);
 
-// ─── Column highlight ────────────────────────────────────────────────────────
-const highlightGeo = new THREE.PlaneGeometry(CUBE_SIZE, FIELD_DEPTH + 4);
-const highlightMat = new THREE.MeshBasicMaterial({
-  color: 0xffffff,
-  transparent: true,
-  opacity: 0.03,
-});
-const columnHighlight = new THREE.Mesh(highlightGeo, highlightMat);
-columnHighlight.rotation.x = -Math.PI / 2;
-columnHighlight.position.y = -CUBE_SIZE / 2 + 0.02;
-columnHighlight.position.z = FIELD_DEPTH / 2;
-gameGroup.add(columnHighlight);
+// ─── Lanes ───────────────────────────────────────────────────────────────────
+// The board floor is seven lane strips in alternating paper tints; the lane
+// you are aiming down is lifted toward white. Replaces the 3%-alpha column
+// highlight, which could not be seen on a phone.
+const LANE_NEAR_Z = -1.5;
+const LANE_FAR_Z = FIELD_DEPTH - 0.5;
+const laneGeo = new THREE.PlaneGeometry(COL_CELL, LANE_FAR_Z - LANE_NEAR_Z);
+laneGeo.rotateX(-Math.PI / 2);
+const lanes = new THREE.InstancedMesh(laneGeo, new THREE.MeshBasicMaterial({ color: 0xffffff }), GRID_COLS);
+lanes.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(GRID_COLS * 3), 3);
+for (let c = 0; c < GRID_COLS; c++) {
+  tmpMatrix.makeTranslation(colToX(c), FLOOR_Y + 0.001, (LANE_NEAR_Z + LANE_FAR_Z) / 2);
+  lanes.setMatrixAt(c, tmpMatrix);
+}
+gameGroup.add(lanes);
+
+const white = new THREE.Color(0xffffff);
 
 export function updateColumnHighlight() {
-  columnHighlight.position.x = state.currentCol * COL_CELL;
+  for (let c = 0; c < GRID_COLS; c++) {
+    tmpColor.setHex(c % 2 ? currentTint.laneAlt : currentTint.floor);
+    // How far toward white depends on the tint: a lot on paper, a little on dusk
+    if (c === state.currentCol) tmpColor.lerp(white, currentTint.activeLane);
+    lanes.setColorAt(c, tmpColor);
+  }
+  lanes.instanceColor.needsUpdate = true;
 }
 
-// ─── Ghost preview (wireframe at landing position) ───────────────────────────
-const ghostGeo = new THREE.BoxGeometry(CUBE_SIZE * 0.98, CUBE_SIZE * 0.98, CUBE_SIZE * 0.98);
-const ghostEdges = new THREE.EdgesGeometry(ghostGeo);
-const ghostMat = new THREE.LineBasicMaterial({
+// ─── Ghost preview (where the shot will land) ────────────────────────────────
+// A solid cube at 45% in the shot's colour, not a white wireframe
+const ghostMat = new THREE.MeshStandardMaterial({
   color: 0xffffff,
+  roughness: 0.9,
+  metalness: 0,
   transparent: true,
-  opacity: 0.25,
+  opacity: 0.45,
+  depthWrite: false,
 });
-const ghostCube = new THREE.LineSegments(ghostEdges, ghostMat);
+const ghostCube = new THREE.Mesh(cubeGeo, ghostMat);
 ghostCube.visible = false;
 gameGroup.add(ghostCube);
 
@@ -134,22 +243,12 @@ export function updateGhost() {
     return;
   }
   ghostCube.position.set(colToX(state.currentCol), 0, rowToZ(row));
-  if (state.currentColorIndex === RAINBOW_INDEX) {
-    ghostMat.color.setHex(0xffffff);
-  } else if (state.currentColorIndex === BOMB_INDEX) {
-    ghostMat.color.setHex(0xff8800);
-  } else {
-    ghostMat.color.setHex(COLORS[state.currentColorIndex]);
-  }
+  cubeColor(state.currentColorIndex, ghostCube.position.x, ghostCube.position.z, ghostMat.color);
   ghostCube.visible = true;
 }
 
-// Pulse the ghost's outline (once per frame)
-export function pulseGhost() {
-  if (ghostCube.visible) {
-    ghostMat.opacity = 0.18 + Math.sin(Date.now() * 0.005) * 0.1;
-  }
-}
+// The ghost holds still at 45%; kept for the frame loop's call
+export function pulseGhost() {}
 
 // ─── Spawn-point cube ────────────────────────────────────────────────────────
 export const spawnCube = createCubeMesh(state.currentColorIndex);
@@ -178,9 +277,11 @@ export function updateSpawnPop(dt) {
   }
 }
 
-// Theme change: every cube takes its colour from COLORS at draw time, so
-// there is nothing to repaint
-export function recolorCubes() {}
+// Theme change: cubes take their colour from COLORS at draw time; the lanes
+// take the new tint here
+export function recolorCubes() {
+  updateColumnHighlight();
+}
 
 // ─── Landing squash & stretch ────────────────────────────────────────────────
 let landingAnims = [];

@@ -1,23 +1,111 @@
-// ─── Cube palette ────────────────────────────────────────────────────────────
-// The five plain colours, as hex for materials and as CSS for the HUD. The
-// active theme swaps them in place, so importers always see the current set.
+// ─── Palette ─────────────────────────────────────────────────────────────────
+// "Ceramic on paper" (docs/APPSTORE_PLAN.md, Design — Beautiful): one colour
+// system in three tints. Each theme in themes.js maps to a tint here; the
+// theme still picks the music, the tint picks every colour on screen.
+//
+// COLORS / COLOR_NAMES are the five plain cube colours, as hex for materials
+// and as CSS for the HUD. The active tint swaps them in place, so importers
+// always see the current set.
 
-export const COLORS = [
-  0xff4444, // red
-  0x44bb44, // green
-  0x4488ff, // blue
-  0xffcc00, // yellow
-  0xff66ff, // magenta
-];
+import { THEMES } from '../themes.js';
+
+// Coral, teal, cobalt, amber, orchid: no red-vs-green pair. Amber vs coral is
+// still close for protanopes, so every colour also carries a glyph (GLYPHS).
+const DAWN_CUBES = [0xf25f5c, 0x2ec4b6, 0x3a6ff2, 0xffb020, 0xb564e3];
+
+// Dusk sits on a dark ground, so its cubes are lifted 8% in luminance
+function lift(hex, amount) {
+  const r = (hex >> 16) & 255, g = (hex >> 8) & 255, b = hex & 255;
+  const up = (v) => Math.round(v + (255 - v) * amount);
+  return (up(r) << 16) | (up(g) << 8) | up(b);
+}
+
+export const TINTS = {
+  dawn: {
+    name: 'DAWN',
+    ground: 0xf3eee6,
+    floor: 0xe7e0d5,
+    laneAlt: 0xede6da,
+    line: 0xd6cdbf,
+    danger: 0xf2b8a6,
+    slab: 0x2b2a28,
+    shadow: 0.2,
+    activeLane: 0.45,
+    cubes: DAWN_CUBES,
+  },
+  dusk: {
+    name: 'DUSK',
+    ground: 0x2a2734,
+    floor: 0x343047,
+    laneAlt: 0x3a364e,
+    line: 0x4a4560,
+    danger: 0xc9705e,
+    slab: 0x15131b,
+    shadow: 0.45,
+    activeLane: 0.1,
+    cubes: DAWN_CUBES.map((c) => lift(c, 0.08)),
+  },
+  slate: {
+    name: 'SLATE',
+    ground: 0xdde3e8,
+    floor: 0xcfd6dc,
+    laneAlt: 0xd6dde2,
+    line: 0xbac3cb,
+    danger: 0xf2b8a6,
+    slab: 0x2b2a28,
+    shadow: 0.2,
+    activeLane: 0.45,
+    cubes: DAWN_CUBES,
+  },
+};
+
+// Theme -> tint, by position in THEMES. Four themes, three tints: the cycle
+// is Dawn, Dusk, Slate, Dusk, so every theme change is a visible one.
+const TINT_CYCLE = ['dawn', 'dusk', 'slate', 'dusk'];
+
+export function tintForTheme(theme) {
+  const i = Math.max(0, THEMES.indexOf(theme));
+  return TINTS[TINT_CYCLE[i % TINT_CYCLE.length]];
+}
+
+// The level-up banner names the tint, not the old neon theme
+export function tintNameForThemeName(themeName) {
+  const theme = THEMES.find((t) => t.name === themeName);
+  return theme ? tintForTheme(theme).name : themeName;
+}
+
+// Specials: rainbow is an animated hue on a white base; the bomb is a dark
+// body with a coral fuse glyph
+export const RAINBOW_BASE = 0xffffff;
+export const BOMB_BODY = 0x2b2a28;
+export const BOMB_FUSE = 0xf25f5c;
+
+// Face glyph per colour index, same order as the atlas in cubes.js and the
+// SVGs in the HUD: dot, ring, cross, bar, diamond, then rainbow and bomb
+export const GLYPHS = ['dot', 'ring', 'cross', 'bar', 'diamond', 'star', 'fuse'];
+
+export let currentTint = TINTS.dawn;
+export const COLORS = [...DAWN_CUBES];
 export const COLOR_NAMES = [];
+
+const css = (hex) => '#' + hex.toString(16).padStart(6, '0');
 
 function refreshColorNames() {
   COLOR_NAMES.length = 0;
-  COLOR_NAMES.push(...COLORS.map((c) => '#' + c.toString(16).padStart(6, '0')));
+  COLOR_NAMES.push(...COLORS.map(css));
 }
 refreshColorNames();
 
-export function setPalette(palette) {
-  for (let i = 0; i < COLORS.length; i++) COLORS[i] = palette[i];
+export function setTint(tint) {
+  currentTint = tint;
+  for (let i = 0; i < COLORS.length; i++) COLORS[i] = tint.cubes[i];
   refreshColorNames();
 }
+
+// main.js hands over the theme's own palette; the tint for that theme wins
+export function setPalette(palette) {
+  const theme = THEMES.find((t) => t.palette === palette);
+  setTint(theme ? tintForTheme(theme) : currentTint);
+}
+
+export { css as hexToCss };
