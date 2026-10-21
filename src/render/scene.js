@@ -4,6 +4,7 @@
 
 import * as THREE from 'three';
 import { GRID_COLS, GRID_ROWS } from '../game/rules.js';
+import { installFrameMeter } from './perf.js';
 
 export const CUBE_SIZE = 1;
 export const COL_CELL = CUBE_SIZE;
@@ -19,9 +20,20 @@ export const centerX = gridWidth / 2 - COL_CELL / 2;
 export const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-renderer.shadowMap.enabled = true;
-renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+// No shadow map: nothing casts or receives one
 document.body.insertBefore(renderer.domElement, document.getElementById('ui'));
+
+// Work that must see this frame's final positions (the instanced cubes copy
+// their proxies' transforms) runs here, after the game loop has moved
+// everything and right before the draw.
+const beforeRenderHooks = [];
+export function onBeforeRender(fn) {
+  beforeRenderHooks.push(fn);
+}
+scene.onBeforeRender = () => {
+  for (const fn of beforeRenderHooks) fn();
+};
+installFrameMeter(scene);
 
 // ─── Lighting ────────────────────────────────────────────────────────────────
 const ambientLight = new THREE.AmbientLight(0x8888cc, 0.4);
@@ -41,10 +53,9 @@ scene.add(backLight);
 export const gameGroup = new THREE.Group();
 scene.add(gameGroup);
 
-// Theme state — material refs so applyEnvironment can recolor the board
+// Theme state — refs so applyEnvironment can recolor the board
 let groundMatRef = null;
-let gridCoreMatRef = null;
-let gridFadeMatRef = null;
+let gridLines = null;
 
 // ─── Coordinate mapping ─────────────────────────────────────────────────────
 export function colToX(col) {
@@ -55,9 +66,30 @@ export function rowToZ(row) {
   return row * DEPTH_CELL;
 }
 
-// Take a mesh out of the scene and free its GPU buffers
+// Instance buffers are filled in a staging copy every frame and uploaded
+// only when they differ from what the GPU already has, and then only the
+// part in use: a board at rest costs no buffer traffic at all.
+export function uploadIfChanged(attr, staging, length) {
+  const a = attr.array;
+  for (let k = 0; k < length; k++) {
+    if (a[k] !== staging[k]) {
+      a.set(staging.subarray(0, length));
+      attr.clearUpdateRanges();
+      attr.addUpdateRange(0, length);
+      attr.needsUpdate = true;
+      return;
+    }
+  }
+}
+
+// Take a mesh out of the scene and free what it holds. Cubes are proxies
+// drawn by one InstancedMesh (see cubes.js) and release their instance.
 export function disposeMesh(mesh) {
   gameGroup.remove(mesh);
+  if (mesh.dispose) {
+    mesh.dispose();
+    return;
+  }
   mesh.geometry.dispose();
   mesh.material.dispose();
 }
@@ -78,12 +110,22 @@ export function createGroundPlane() {
 }
 
 // ─── Grid visual ─────────────────────────────────────────────────────────────
+// Every line on the board (lanes, rows, the extended side tracks, the side
+// walls and the red far-wall frame) is one LineSegments with a colour per
+// vertex: one draw call instead of ~50. Each segment is tagged core, fade or
+// wall so applyEnvironment can repaint them.
+const LINE_CORE = 0;
+const LINE_FADE = 1;
+const LINE_WALL = 2;
+
 export function createGridVisual() {
-  const coreMat = new THREE.LineBasicMaterial({ color: 0x5566aa });
-  const fadeMat = new THREE.LineBasicMaterial({ color: 0x334466 });
-  gridCoreMatRef = coreMat;
-  gridFadeMatRef = fadeMat;
   const floorY = -CUBE_SIZE / 2 + 0.01;
+  const positions = [];
+  const kinds = [];
+  const seg = (kind, x1, y1, z1, x2, y2, z2) => {
+    positions.push(x1, y1, z1, x2, y2, z2);
+    kinds.push(kind, kind);
+  };
 
   const farZ = FIELD_DEPTH + EXTRA_ROWS * DEPTH_CELL + 1;
   const coreLeftX = -COL_CELL / 2;
@@ -92,74 +134,61 @@ export function createGridVisual() {
   const extRightX = coreRightX + EXTRA_COLS * COL_CELL;
 
   for (let i = 1; i <= EXTRA_COLS; i++) {
-    const x = coreLeftX - i * COL_CELL;
-    const pts = [new THREE.Vector3(x, floorY, -2), new THREE.Vector3(x, floorY, farZ)];
-    gameGroup.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts), fadeMat));
+    seg(LINE_FADE, coreLeftX - i * COL_CELL, floorY, -2, coreLeftX - i * COL_CELL, floorY, farZ);
+    seg(LINE_FADE, coreRightX + i * COL_CELL, floorY, -2, coreRightX + i * COL_CELL, floorY, farZ);
   }
   for (let c = 0; c <= GRID_COLS; c++) {
     const x = c * COL_CELL - COL_CELL / 2;
-    const pts = [new THREE.Vector3(x, floorY, -2), new THREE.Vector3(x, floorY, farZ)];
-    gameGroup.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts), coreMat));
-  }
-  for (let i = 1; i <= EXTRA_COLS; i++) {
-    const x = coreRightX + i * COL_CELL;
-    const pts = [new THREE.Vector3(x, floorY, -2), new THREE.Vector3(x, floorY, farZ)];
-    gameGroup.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts), fadeMat));
+    seg(LINE_CORE, x, floorY, -2, x, floorY, farZ);
   }
 
   const totalRows = GRID_ROWS + EXTRA_ROWS;
   for (let r = 0; r <= totalRows; r++) {
     const z = r * DEPTH_CELL - DEPTH_CELL / 2;
-    const mat = r <= GRID_ROWS ? coreMat : fadeMat;
-    const pts = [
-      new THREE.Vector3(extLeftX, floorY, z),
-      new THREE.Vector3(extRightX, floorY, z),
-    ];
-    gameGroup.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts), mat));
+    seg(r <= GRID_ROWS ? LINE_CORE : LINE_FADE, extLeftX, floorY, z, extRightX, floorY, z);
   }
 
-  const wallMat = coreMat; // side walls share the theme's core grid color
+  // Side walls share the theme's core grid color
   const wallHeight = CUBE_SIZE * 2;
-
-  [coreLeftX, coreRightX].forEach((x) => {
+  for (const x of [coreLeftX, coreRightX]) {
     for (let r = 0; r <= GRID_ROWS; r += 2) {
-      const z = r * DEPTH_CELL;
-      const pts = [
-        new THREE.Vector3(x, floorY, z),
-        new THREE.Vector3(x, floorY + wallHeight, z),
-      ];
-      gameGroup.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts), wallMat));
+      seg(LINE_CORE, x, floorY, r * DEPTH_CELL, x, floorY + wallHeight, r * DEPTH_CELL);
     }
-    const topPts = [
-      new THREE.Vector3(x, floorY + wallHeight, -2),
-      new THREE.Vector3(x, floorY + wallHeight, FIELD_DEPTH + 1),
-    ];
-    gameGroup.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(topPts), wallMat));
-  });
+    seg(LINE_CORE, x, floorY + wallHeight, -2, x, floorY + wallHeight, FIELD_DEPTH + 1);
+  }
 
-  const wallIndicatorMat = new THREE.LineBasicMaterial({ color: 0xff2222 });
+  // The far wall's frame
   const wallZ = (GRID_ROWS - 1) * DEPTH_CELL + DEPTH_CELL / 2;
-  const wallPts = [
-    new THREE.Vector3(coreLeftX, floorY, wallZ),
-    new THREE.Vector3(coreRightX, floorY, wallZ),
-  ];
-  gameGroup.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(wallPts), wallIndicatorMat));
+  seg(LINE_WALL, coreLeftX, floorY, wallZ, coreRightX, floorY, wallZ);
+  seg(LINE_WALL, coreLeftX, floorY, wallZ, coreLeftX, floorY + wallHeight, wallZ);
+  seg(LINE_WALL, coreLeftX, floorY + wallHeight, wallZ, coreRightX, floorY + wallHeight, wallZ);
+  seg(LINE_WALL, coreRightX, floorY + wallHeight, wallZ, coreRightX, floorY, wallZ);
 
-  const wallVertPts = [
-    new THREE.Vector3(coreLeftX, floorY, wallZ),
-    new THREE.Vector3(coreLeftX, floorY + wallHeight, wallZ),
-    new THREE.Vector3(coreRightX, floorY + wallHeight, wallZ),
-    new THREE.Vector3(coreRightX, floorY, wallZ),
-  ];
-  gameGroup.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(wallVertPts), wallIndicatorMat));
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+  geo.setAttribute('color', new THREE.Float32BufferAttribute(new Float32Array(kinds.length * 3), 3));
+  gridLines = new THREE.LineSegments(geo, new THREE.LineBasicMaterial({ vertexColors: true }));
+  gridLines.userData.kinds = kinds;
+  gameGroup.add(gridLines);
+  paintGridLines(0x5566aa, 0x334466, 0xff2222);
+}
+
+function paintGridLines(core, fade, wall) {
+  if (!gridLines) return;
+  const colors = [new THREE.Color(core), new THREE.Color(fade), new THREE.Color(wall)];
+  const attr = gridLines.geometry.getAttribute('color');
+  gridLines.userData.kinds.forEach((kind, i) => {
+    const c = colors[kind];
+    attr.setXYZ(i, c.r, c.g, c.b);
+  });
+  attr.needsUpdate = true;
 }
 
 // Background, ground and grid lines for a theme (the cube palette is separate)
 export function applyEnvironment(theme) {
   scene.background.setHex(theme.bg);
   if (groundMatRef) groundMatRef.color.setHex(theme.ground);
-  if (gridCoreMatRef) gridCoreMatRef.color.setHex(theme.gridCore);
-  if (gridFadeMatRef) gridFadeMatRef.color.setHex(theme.gridFade);
+  paintGridLines(theme.gridCore, theme.gridFade, 0xff2222);
 }
 
 // Lights react to the dynamic intensity (0-1)

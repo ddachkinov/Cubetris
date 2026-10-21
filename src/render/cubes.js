@@ -3,26 +3,96 @@
 // highlight, the landing ghost and the spawn cube. Also the per-cube
 // animations: landing squash, wall-push and gravity tweens, and the rainbow
 // and bomb shimmer.
+//
+// Every cube (the board, the one in flight and the one in hand) is drawn by
+// one InstancedMesh. What the game holds as a cube's "mesh" is a CubeProxy:
+// an Object3D with a position and scale like any mesh, which the game moves
+// and tweens as before. Right before each draw, syncCubes() copies every
+// live proxy into the instance buffers. One draw call for up to 86 cubes,
+// and placing or clearing a cube allocates nothing on the GPU.
 
 import * as THREE from 'three';
-import { GRID_COLS, GRID_ROWS, RAINBOW_INDEX, BOMB_INDEX, landingRow } from '../game/rules.js';
+import { RAINBOW_INDEX, BOMB_INDEX, landingRow } from '../game/rules.js';
 import { state } from '../game/state.js';
 import { COLORS } from './palette.js';
-import { CUBE_SIZE, COL_CELL, FIELD_DEPTH, gameGroup, colToX, rowToZ } from './scene.js';
+import {
+  CUBE_SIZE, COL_CELL, FIELD_DEPTH, gameGroup, colToX, rowToZ, onBeforeRender, uploadIfChanged,
+} from './scene.js';
+
+// 84 board cells, the shot in flight and the cube in hand, with room to spare
+const MAX_CUBES = 100;
+
+const liveCubes = new Set();
+
+class CubeProxy extends THREE.Object3D {
+  constructor(colorIndex) {
+    super();
+    this.colorIndex = colorIndex;
+    // Never drawn itself; syncCubes reads position/quaternion/scale directly
+    this.matrixAutoUpdate = false;
+    liveCubes.add(this);
+  }
+
+  dispose() {
+    liveCubes.delete(this);
+  }
+}
+
+const cubeMesh = new THREE.InstancedMesh(
+  new THREE.BoxGeometry(CUBE_SIZE, CUBE_SIZE, CUBE_SIZE),
+  new THREE.MeshLambertMaterial({ color: 0xffffff }),
+  MAX_CUBES
+);
+cubeMesh.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(MAX_CUBES * 3), 3);
+cubeMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+cubeMesh.instanceColor.setUsage(THREE.DynamicDrawUsage);
+// The instances move every frame; a bounding sphere computed once would cull them
+cubeMesh.frustumCulled = false;
+cubeMesh.count = 0;
+gameGroup.add(cubeMesh);
 
 export function createCubeMesh(colorIndex) {
-  const geo = new THREE.BoxGeometry(CUBE_SIZE, CUBE_SIZE, CUBE_SIZE);
-  if (colorIndex === RAINBOW_INDEX) {
-    const mat = new THREE.MeshLambertMaterial({ color: 0xffffff, emissive: 0x333333 });
-    return new THREE.Mesh(geo, mat);
-  }
-  if (colorIndex === BOMB_INDEX) {
-    const mat = new THREE.MeshLambertMaterial({ color: 0xff6600, emissive: 0x331100 });
-    return new THREE.Mesh(geo, mat);
-  }
-  const mat = new THREE.MeshLambertMaterial({ color: COLORS[colorIndex] });
-  return new THREE.Mesh(geo, mat);
+  return new CubeProxy(colorIndex);
 }
+
+// ─── Instance sync ───────────────────────────────────────────────────────────
+let rainbowTime = 0;
+const tmpMatrix = new THREE.Matrix4();
+const tmpColor = new THREE.Color();
+
+function cubeColor(cube, out) {
+  if (cube.colorIndex === RAINBOW_INDEX) {
+    // Hue drifts with time and with the cube's place on the board
+    const hue = (rainbowTime * 0.5 + cube.position.x * 0.1 + cube.position.z * 0.05) % 1;
+    return out.setHSL(hue, 0.7, 0.7);
+  }
+  if (cube.colorIndex === BOMB_INDEX) {
+    const pulse = Math.sin(rainbowTime * 4) * 0.5 + 0.5;
+    return out.setHex(0xff6600).offsetHSL(0, 0, 0.12 * pulse);
+  }
+  return out.setHex(COLORS[cube.colorIndex]);
+}
+
+const staged = {
+  matrix: new Float32Array(MAX_CUBES * 16),
+  color: new Float32Array(MAX_CUBES * 3),
+};
+
+function syncCubes() {
+  let i = 0;
+  for (const cube of liveCubes) {
+    if (i >= MAX_CUBES) break;
+    tmpMatrix.compose(cube.position, cube.quaternion, cube.scale).toArray(staged.matrix, i * 16);
+    cubeColor(cube, tmpColor).toArray(staged.color, i * 3);
+    i++;
+  }
+  uploadIfChanged(cubeMesh.instanceMatrix, staged.matrix, i * 16);
+  uploadIfChanged(cubeMesh.instanceColor, staged.color, i * 3);
+  cubeMesh.count = i;
+  // An InstancedMesh with count 0 would still issue a (zero-instance) draw
+  cubeMesh.visible = i > 0;
+}
+onBeforeRender(syncCubes);
 
 // ─── Column highlight ────────────────────────────────────────────────────────
 const highlightGeo = new THREE.PlaneGeometry(CUBE_SIZE, FIELD_DEPTH + 4);
@@ -82,24 +152,13 @@ export function pulseGhost() {
 }
 
 // ─── Spawn-point cube ────────────────────────────────────────────────────────
-const spawnGeo = new THREE.BoxGeometry(CUBE_SIZE, CUBE_SIZE, CUBE_SIZE);
-const spawnMat = new THREE.MeshLambertMaterial({ color: COLORS[0] });
-export const spawnCube = new THREE.Mesh(spawnGeo, spawnMat);
+export const spawnCube = createCubeMesh(state.currentColorIndex);
 spawnCube.position.set(state.currentCol * COL_CELL, 0, -1);
 gameGroup.add(spawnCube);
 
 export function updateSpawnCube() {
   spawnCube.position.x = state.currentCol * COL_CELL;
-  if (state.currentColorIndex === RAINBOW_INDEX) {
-    spawnMat.color.setHex(0xffffff);
-    spawnMat.emissive.setHex(0x333333);
-  } else if (state.currentColorIndex === BOMB_INDEX) {
-    spawnMat.color.setHex(0xff6600);
-    spawnMat.emissive.setHex(0x221100);
-  } else {
-    spawnMat.color.setHex(COLORS[state.currentColorIndex]);
-    spawnMat.emissive.setHex(0x000000);
-  }
+  spawnCube.colorIndex = state.currentColorIndex;
 }
 
 // Scale-pop feedback on the spawn cube when the lane or the hand changes
@@ -119,21 +178,9 @@ export function updateSpawnPop(dt) {
   }
 }
 
-// Theme change: repaint every plain cube on the board and in flight
-export function recolorCubes() {
-  const { grid, shootingCube } = state;
-  for (let c = 0; c < GRID_COLS; c++) {
-    for (let r = 0; r < GRID_ROWS; r++) {
-      const cell = grid[c] && grid[c][r];
-      if (cell && cell.colorIndex < COLORS.length) {
-        cell.mesh.material.color.setHex(COLORS[cell.colorIndex]);
-      }
-    }
-  }
-  if (shootingCube && shootingCube.colorIndex < COLORS.length) {
-    shootingCube.mesh.material.color.setHex(COLORS[shootingCube.colorIndex]);
-  }
-}
+// Theme change: every cube takes its colour from COLORS at draw time, so
+// there is nothing to repaint
+export function recolorCubes() {}
 
 // ─── Landing squash & stretch ────────────────────────────────────────────────
 let landingAnims = [];
@@ -195,51 +242,17 @@ export function resetCubeAnims() {
 }
 
 // ─── Rainbow + bomb visual animation ─────────────────────────────────────────
-let rainbowTime = 0;
-
+// The shimmer itself is computed per instance in syncCubes; this keeps time
 export function updateSpecialCubeVisuals(dt) {
   rainbowTime += dt;
-
-  for (let c = 0; c < GRID_COLS; c++) {
-    for (let r = 0; r < GRID_ROWS; r++) {
-      const cell = state.grid[c][r];
-      if (!cell) continue;
-
-      if (cell.colorIndex === RAINBOW_INDEX) {
-        const hue = (rainbowTime * 0.5 + c * 0.1 + r * 0.05) % 1;
-        cell.mesh.material.color.setHSL(hue, 0.7, 0.7);
-        cell.mesh.material.emissive.setHSL(hue, 1, 0.15);
-      }
-
-      if (cell.colorIndex === BOMB_INDEX) {
-        const pulse = Math.sin(rainbowTime * 4) * 0.5 + 0.5;
-        cell.mesh.material.emissive.setRGB(0.3 * pulse, 0.15 * pulse, 0);
-      }
-    }
-  }
-
-  // Spawn cube special animations
-  if (state.currentColorIndex === RAINBOW_INDEX) {
-    const hue = (rainbowTime * 0.5) % 1;
-    spawnMat.color.setHSL(hue, 0.7, 0.7);
-    spawnMat.emissive.setHSL(hue, 1, 0.15);
-  } else if (state.currentColorIndex === BOMB_INDEX) {
-    const pulse = Math.sin(rainbowTime * 4) * 0.5 + 0.5;
-    spawnMat.emissive.setRGB(0.3 * pulse, 0.15 * pulse, 0);
-  }
 }
 
-// Restart's nuclear cleanup: any stray cube-shaped mesh still in the group
-// (debris, trail, an orphaned cube) goes, except the spawn cube and the lane
-// highlight
+// Restart's nuclear cleanup: any stray cube still alive (an orphaned shot, a
+// cube that missed its dispose) goes, except the spawn cube
 export function sweepStrayCubes() {
-  const keepers = new Set([spawnCube, columnHighlight]);
-  for (let i = gameGroup.children.length - 1; i >= 0; i--) {
-    const child = gameGroup.children[i];
-    if (child.isMesh && child.geometry?.type === 'BoxGeometry' && !keepers.has(child)) {
-      gameGroup.remove(child);
-      child.geometry.dispose();
-      child.material.dispose();
-    }
+  for (const cube of [...liveCubes]) {
+    if (cube === spawnCube) continue;
+    gameGroup.remove(cube);
+    cube.dispose();
   }
 }

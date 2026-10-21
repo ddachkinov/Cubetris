@@ -29,6 +29,11 @@ level-up, danger, game over, desktop, and banners taking turns after a restart. 
 one (`npm run shots -- chain`). It reaches the game through `window.__hs`, a debug hook
 that exists only when the page is loaded with `?debug=1`.
 
+`?debug=1` also puts a frame meter in the bottom-left corner: main-thread work per frame
+(game update plus `renderer.render`, not the refresh-locked interval), the last 60
+frames as bars against a 12 ms budget line, and p95/max over the last 10 s. The same
+numbers are on `window.__hsPerf` (`stats()`, `samples()`, `reset()`).
+
 `npm run replay` (`scripts/replay.mjs`) is the refactoring safety net. It runs the game
 on a virtual clock (fixed 1/60 s frames, a fixed date, seeded `Math.random`) and feeds it
 `scripts/replays/daily-60s.json`: 60 s of daily-seed play recorded from a bot as plain
@@ -65,7 +70,7 @@ and all visuals are Three.js primitives, so the whole game is the JavaScript bun
 | `src/game/rules.js` | Pure rules: landing, flood-fill matching, removal sets, gravity, wall rows, opening seeds, the bag, the seeded RNG and the difficulty curves |
 | `src/game/rules.test.js` | Vitest suite for `rules.js` (`npm test`) |
 | `src/game/state.js` | The one `state` object a run is made of, and `serialize`/`deserialize` for saving one between shots |
-| `src/render/` | Three.js: `scene.js` (renderer, lights, static board), `camera.js` (fit to any aspect, shake), `cubes.js` (cube meshes, aim visuals, cube tweens), `particles.js` (debris, shot trail), `palette.js` (the theme's cube colours) |
+| `src/render/` | Three.js: `scene.js` (renderer, lights, static board), `camera.js` (fit to any aspect, shake), `cubes.js` (every cube drawn by one `InstancedMesh`; aim visuals, cube tweens), `particles.js` (debris and shot trail, one pooled `InstancedMesh` of 240), `palette.js` (the theme's cube colours), `perf.js` (the `?debug=1` frame meter) |
 | `src/audio/sfx.js` | The `AudioContext` and every synthesized sound effect |
 | `src/audio/music.js` | `MusicEngine` — four synthesized stems driven by gameplay intensity, plus a beat grid used to quantize sound effects |
 | `src/ui/hud.js` | The DOM overlay: score line, previews, wall timer, banners, popups, flash, pause and game-over screens, first-run hint |
