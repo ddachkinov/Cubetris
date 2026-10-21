@@ -47,7 +47,7 @@ export function installFrameMeter(scene) {
     borderRadius: '6px',
     background: 'rgba(20, 18, 16, 0.72)',
     color: '#fff',
-    font: '600 11px ui-monospace, Menlo, monospace',
+    font: '600 11px ui-monospace, monospace',
     pointerEvents: 'none',
     zIndex: 100,
   });

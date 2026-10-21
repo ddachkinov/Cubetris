@@ -20,6 +20,7 @@ npm run build    # -> dist/
 npm run shots    # 9 scene screenshots -> shots/, non-zero exit on any page error
 npm run replay   # replay a recorded 60 s daily run, fail unless it ends identically
 npm run checks   # scripted gameplay checks on a virtual clock, e.g. an idle board stays put
+npm run perf     # frame work during a staged 11-cube chain, 4x CPU throttle; fails over 12 ms p95
 npm test         # Vitest on src/game/rules.js and the music scheduler
 ```
 
@@ -27,12 +28,17 @@ npm test         # Vitest on src/game/rules.js and the music scheduler
 and screenshots nine scenes: opening, aiming, a greedy bot's game, a staged ×2 chain,
 level-up, danger, game over, desktop, and banners taking turns after a restart. Pass part of a scene name to run only that
 one (`npm run shots -- chain`). It reaches the game through `window.__hs`, a debug hook
-that exists only when the page is loaded with `?debug=1`.
+that exists only when the page is loaded with `?debug=1`. A scene whose page stops
+responding for 90 s is retried once in a fresh browser: headless Chromium here now and
+then loses the reply to a font lookup and the page waits forever (see the comment at the
+top of `shoot.mjs`); a real hang in the game stalls the retry too and fails.
 
 `?debug=1` also puts a frame meter in the bottom-left corner: main-thread work per frame
 (game update plus `renderer.render`, not the refresh-locked interval), the last 60
 frames as bars against a 12 ms budget line, and p95/max over the last 10 s. The same
-numbers are on `window.__hsPerf` (`stats()`, `samples()`, `reset()`).
+numbers are on `window.__hsPerf` (`stats()`, `samples()`, `reset()`). `npm run perf`
+(`scripts/perf.mjs`) measures the same thing headless: six staged 11-cube ×2 chains on a
+1440×900 page with the CPU throttled 4× through DevTools' protocol.
 
 `npm run replay` (`scripts/replay.mjs`) is the refactoring safety net. It runs the game
 on a virtual clock (fixed 1/60 s frames, a fixed date, seeded `Math.random`) and feeds it
@@ -91,6 +97,7 @@ and all visuals are Three.js primitives, so the whole game is the JavaScript bun
 | `scripts/shoot.mjs` | Screenshot harness behind `npm run shots` |
 | `scripts/replay.mjs` | Input record/replay harness behind `npm run replay`; the recording is in `scripts/replays/` |
 | `scripts/checks.mjs` | Scripted gameplay checks behind `npm run checks` |
+| `scripts/perf.mjs` | Frame-budget measurement behind `npm run perf` |
 | `scripts/vclock.mjs` | The virtual clock and page driver `replay.mjs` and `checks.mjs` share |
 | `scripts/bot.mjs` | The greedy bot and seeded `Math.random` both harnesses use |
 | `docs/APPSTORE_PLAN.md` | Recon, IP audit, design spec and the phased plan to ship on iOS |

@@ -11,6 +11,7 @@
     "replay": "node scripts/replay.mjs",
     "test": "vitest run",
     "checks": "node scripts/checks.mjs",
+    "perf": "node scripts/perf.mjs",
     "ios": "vite build && cap sync ios"
   },
   "repository": {
