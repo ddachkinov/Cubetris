@@ -12,8 +12,9 @@ import {
   landingRow, reachedFront, isInDanger, computeRemovalSet, fullRowCount, gravityMoves,
 } from './game/rules.js';
 import { state, serialize, deserialize, isBusy, SAVE_VERSION } from './game/state.js';
+import { boardSketch, dailyShareText } from './game/daily.js';
 import {
-  todayKey, loadBest, saveBest, loadLifeStats, saveLifeStats, recordDailyScore,
+  todayKey, loadBest, saveBest, loadLifeStats, saveLifeStats, loadDailyBest, recordDailyRun,
   writeSavedRun, readSavedRun, clearSavedRun,
 } from './persistence.js';
 import {
@@ -40,24 +41,27 @@ import {
   showLevelUpBanner, showRowClearBanner, showClutchBanner, triggerFlash, updateFlash, isFlashing,
   resetFlash, updateNextPreview, updateHoldPreview, showWallTimer, hideWallWarning, resetWallTimer,
   setDanger, setDailyIndicator, showGameOver, showPause, hideOverlays, updateHint, resetIdle,
-  showContinue, setMuteLabel,
+  showContinue, setMuteLabel, showFrontDoor, showShared,
 } from './ui/hud.js';
 import { haptic } from './platform/haptics.js';
 import { initNativeLifecycle } from './platform/lifecycle.js';
+import { shareText } from './platform/share.js';
 import { initInput, resetAim } from './input.js';
 
 // ─── Progress that outlives a run ────────────────────────────────────────────
 let highScore = loadBest();
 const lifeStats = loadLifeStats();
 let currentThemeIndex = -1;
+// The date of the Daily on the board: its seed, and the day its score
+// counts for, even if the run ends after midnight
+let dailyDate = null;
+// The front door is up (see openFrontDoor)
+let atFrontDoor = false;
 
 // Next cube for the hand: from the bag, or a special at higher levels
 function dealColor() {
   return randomColorIndex(state.bag, state.level, state.queueRng);
 }
-
-state.currentColorIndex = dealColor();
-state.nextQueue = [dealColor(), dealColor(), dealColor()];
 
 setBest(highScore);
 
@@ -473,11 +477,12 @@ let savePending = false;
 
 function saveRun() {
   savePending = false;
-  writeSavedRun({ run: serialize(), dailyDate: state.dailyMode ? todayKey() : null, savedAt: Date.now() });
+  writeSavedRun({ run: serialize(), dailyDate: state.dailyMode ? dailyDate : null, savedAt: Date.now() });
 }
 
+// A run that has not had its first shot is not worth offering back
 function saveRunWhenIdle() {
-  if (state.gameOver) return;
+  if (state.gameOver || !state.wallStarted) return;
   if (isBusy(state)) savePending = true;
   else saveRun();
 }
@@ -524,17 +529,31 @@ function triggerGameOver() {
   const recap = `Best chain x${Math.max(1, runStats.bestChain)} • ${runStats.cleared} cubes • Level ${state.level}`
     + (runStats.clutches ? ` • ${runStats.clutches} clutch` : '');
 
-  // Daily challenge result
-  const daily = state.dailyMode
-    ? `📅 Daily ${todayKey()} — Best: ${recordDailyScore(todayKey(), score)}`
-    : null;
-
   if (state.dangerActive) {
     state.dangerActive = false;
     setDanger(false);
   }
 
-  showGameOver({ score, best: highScore, isNewBest, recap, daily });
+  if (state.dailyMode) {
+    // Unlimited tries; the day's best is what is shown and shared
+    const { best, prev } = recordDailyRun(dailyDate, {
+      score, chain: runStats.bestChain, sketch: boardSketch(state.grid),
+    });
+    const newBest = isNewBest ? 'NEW BEST!' : prev && best !== prev ? 'NEW BEST TODAY' : null;
+    showGameOver({ score, best: best.score, daily: true, newBest, recap });
+  } else {
+    showGameOver({ score, best: highScore, daily: false, newBest: isNewBest ? 'NEW BEST!' : null, recap });
+  }
+}
+
+// ─── The Daily's share ───────────────────────────────────────────────────────
+// Today's best run as one line and a sketch of the board it ended on (see
+// game/daily.js), to the share sheet; the clipboard where there is none
+async function shareDaily() {
+  const dateKey = state.dailyMode && dailyDate ? dailyDate : todayKey();
+  const best = loadDailyBest(dateKey);
+  if (!best) return;
+  showShared(await shareText(dailyShareText({ dateKey, ...best })));
 }
 
 // Take every cube off the board
@@ -551,8 +570,9 @@ function restartGame(asDaily = false) {
 
   // Daily runs use date-seeded PRNGs — everyone gets the same board today
   state.dailyMode = !!asDaily;
+  dailyDate = state.dailyMode ? todayKey() : null;
   const { queueRng, wallRng } = state.dailyMode
-    ? dailyRngs(todayKey())
+    ? dailyRngs(dailyDate)
     : { queueRng: Math.random, wallRng: Math.random };
   state.queueRng = queueRng;
   state.wallRng = wallRng;
@@ -626,6 +646,7 @@ function restartGame(asDaily = false) {
 
   fitCamera();
 
+  atFrontDoor = false;
   hideOverlays();
 
   initGrid();
@@ -634,11 +655,13 @@ function restartGame(asDaily = false) {
 }
 
 // Put a saved run (see serialize in game/state.js) on the board in place of
-// the current one. Only between shots: nothing may be in flight.
-function loadRun(data) {
+// the current one. Only between shots: nothing may be in flight. A Daily
+// comes back as the Daily of `date`, today's unless the save says otherwise.
+function loadRun(data, date = todayKey()) {
   if (state.shootingCube || state.cascade) throw new Error('loadRun: a shot or cascade is still resolving');
   clearBoard();
   deserialize(data);
+  dailyDate = state.dailyMode ? date : null;
   for (let c = 0; c < GRID_COLS; c++) {
     for (let r = 0; r < GRID_ROWS; r++) {
       const cell = state.grid[c][r];
@@ -656,9 +679,21 @@ function loadRun(data) {
   updateColumnHighlight();
 }
 
+// ─── The front door ──────────────────────────────────────────────────────────
+// Where the app opens, unless a run was saved: today's board, or Endless.
+// Today's board is dealt behind it, paused, so the door reads as a cover
+// over the board rather than a menu in front of nothing. Leaving it is any
+// restartGame() (the door buttons, the Daily button), which takes it down.
+function openFrontDoor() {
+  restartGame(true);
+  atFrontDoor = true;
+  state.paused = true;
+  showFrontDoor({ dateKey: dailyDate, best: loadDailyBest(dailyDate) });
+}
+
 // ─── Pause ───────────────────────────────────────────────────────────────────
 function togglePause() {
-  if (state.gameOver) return;
+  if (state.gameOver || atFrontDoor) return;
   state.paused = !state.paused;
   showPause(state.paused);
   showContinue(false);
@@ -673,7 +708,7 @@ function togglePause() {
 // and save it. Shown again, it waits on the pause screen for the player.
 // The audio side (suspend, resume, resync) is in audio/sfx.js.
 function onHide() {
-  if (state.gameOver) return;
+  if (state.gameOver || atFrontDoor) return;
   if (!state.paused) togglePause();
   saveRunWhenIdle();
 }
@@ -697,7 +732,7 @@ function toggleSound() {
 }
 
 // ─── Init & Game Loop ────────────────────────────────────────────────────────
-initInput({ shoot, holdSwap, togglePause, restartGame, toggleSound });
+initInput({ shoot, holdSwap, togglePause, restartGame, toggleSound, openFrontDoor, shareDaily });
 setMuteLabel(isMuted());
 
 window.addEventListener('resize', () => {
@@ -706,16 +741,8 @@ window.addEventListener('resize', () => {
 });
 
 initGrid();
-placeOpeningSeeds();
 createGroundPlane();
 createGridVisual();
-fitCamera();
-applyTheme(0);
-updateSpawnCube();
-updateColumnHighlight();
-updateNextPreview();
-updateHoldPreview();
-updateGhost();
 
 // Heartbeat synced to the music's beat while in danger
 music.onBeat = (time) => {
@@ -815,27 +842,33 @@ function animate() {
   renderer.render(scene, camera);
 }
 
-// A run saved by an earlier session: put it on the board, paused, and ask
+// A run saved by an earlier session: put it on the board, paused, and ask.
+// Otherwise the app opens on the front door.
 const resumable = resumableRun();
 if (resumable) {
   try {
-    loadRun(resumable.run);
+    // Not through restartGame(): that would drop the save, and a player
+    // who closes the app on this screen must still find the run next time
+    fitCamera();
+    loadRun(resumable.run, resumable.dailyDate || todayKey());
     state.paused = true;
     showContinue(true);
   } catch (err) {
     // An unreadable save is dropped, not fatal
     console.warn('saved run could not be restored', err);
     clearSavedRun();
-    restartGame(false);
+    openFrontDoor();
   }
+} else {
+  openFrontDoor();
 }
 
 // Continue: the saved run carries on from where it was
 document.getElementById('continue-btn').addEventListener('click', () => {
   if (state.paused) togglePause();
 });
-// New run: drop the save
-document.getElementById('new-run-btn').addEventListener('click', () => restartGame(false));
+// New run: drop the save, back to the front door
+document.getElementById('new-run-btn').addEventListener('click', openFrontDoor);
 
 animate();
 
@@ -859,6 +892,8 @@ if (new URLSearchParams(location.search).get('debug') === '1') {
     get busy() { return !!(state.shootingCube || state.cascade || state.queuedShot); },
     get gameOver() { return state.gameOver; },
     get paused() { return state.paused; },
+    get frontDoor() { return atFrontDoor; },
+    get daily() { return state.dailyMode; },
     get danger() { return state.dangerActive; },
     // Seconds on the wall timer (negative = breather), the current interval
     get wall() {

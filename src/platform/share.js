@@ -12,16 +12,28 @@ export async function shareText(text) {
       await Share.share({ text });
       return 'native';
     }
-    if (navigator.share) {
+  } catch {
+    // Dismissed, or the plugin is missing: nothing was shared
+    return null;
+  }
+  if (navigator.share) {
+    try {
       await navigator.share({ text });
       return 'web';
+    } catch (err) {
+      // The player closed the sheet: that is an answer. Anything else (a
+      // desktop browser that has the API but no sheet, a missing user
+      // gesture) falls through to the clipboard.
+      if (err && err.name === 'AbortError') return null;
     }
+  }
+  try {
     if (navigator.clipboard) {
       await navigator.clipboard.writeText(text);
       return 'clipboard';
     }
   } catch {
-    // Dismissed or refused: nothing was shared
+    // Clipboard refused
   }
   return null;
 }

@@ -1,12 +1,13 @@
 // ─── HUD ─────────────────────────────────────────────────────────────────────
 // Everything in the DOM overlay: score line, next/hold previews, the wall
 // timer, banners, popups, the screen flash, the danger vignette, the
-// first-run hint and the pause and game-over screens.
+// first-run hint, the front door and the pause and game-over screens.
 
 import * as THREE from 'three';
 import { RAINBOW_INDEX, BOMB_INDEX, ROW_CLEAR_BONUS } from '../game/rules.js';
 import { state } from '../game/state.js';
 import { hintSeen, markHintSeen } from '../persistence.js';
+import { longDate, formatScore } from '../game/daily.js';
 import { COLOR_NAMES, BOMB_BODY, hexToCss, tintNameForThemeName } from '../render/palette.js';
 import { glyphSvg } from '../render/glyphs.js';
 import { camera } from '../render/camera.js';
@@ -25,7 +26,14 @@ const qSlot2 = document.getElementById('q-slot-2');
 const holdBoxEl = document.getElementById('hold-preview');
 const clutchEl = document.getElementById('clutch-banner');
 const runStatsEl = document.getElementById('run-stats');
-const dailyResultEl = document.getElementById('daily-result');
+const finalBestLabelEl = document.getElementById('final-best-label');
+const restartBtn = document.getElementById('restart-btn');
+const shareBtn = document.getElementById('share-btn');
+const frontDoor = document.getElementById('front-door');
+const doorDateEl = document.getElementById('door-date');
+const doorDailySubEl = document.getElementById('door-daily-sub');
+const doorShareBtn = document.getElementById('door-share');
+const doorChipsEl = document.getElementById('door-chips');
 const dailyIndicatorEl = document.getElementById('daily-indicator');
 const wallWarningEl = document.getElementById('wall-warning');
 const levelUpEl = document.getElementById('level-up');
@@ -305,11 +313,14 @@ export function setDailyIndicator(on) {
 }
 
 // ─── Screens ─────────────────────────────────────────────────────────────────
-// daily: the daily line to show, or null outside a daily run
-export function showGameOver({ score, best, isNewBest, recap, daily }) {
-  finalScoreEl.textContent = score;
-  finalBestEl.textContent = best;
-  newBestEl.style.display = isNewBest ? 'block' : 'none';
+// best: the best to show under the score: today's best on a Daily (labelled
+// so), the all-time best otherwise. newBest: the label for a new best, or null.
+export function showGameOver({ score, best, daily, newBest, recap }) {
+  finalScoreEl.textContent = formatScore(score);
+  finalBestLabelEl.textContent = daily ? "Today's best" : 'Best';
+  finalBestEl.textContent = formatScore(best);
+  newBestEl.textContent = newBest || '';
+  newBestEl.style.display = newBest ? 'block' : 'none';
   // Wrap between the recap's items, never inside one; a separator travels
   // with the item after it, so no line ends on a bullet
   runStatsEl.replaceChildren(...recap.split(' • ').flatMap((item, i) => {
@@ -318,13 +329,54 @@ export function showGameOver({ score, best, isNewBest, recap, daily }) {
     span.textContent = i ? `• ${item}` : item;
     return i ? [' ', span] : [span];
   }));
-  if (daily) {
-    dailyResultEl.textContent = daily;
-    dailyResultEl.style.display = 'block';
-  } else {
-    dailyResultEl.style.display = 'none';
-  }
+  restartBtn.textContent = daily ? 'Try again' : 'Play again';
+  shareBtn.hidden = !daily;
+  resetShareLabels();
   gameOverScreen.style.display = 'flex';
+}
+
+// ─── Front door ──────────────────────────────────────────────────────────────
+// Where the app opens. dateKey names today's board; best is the day's best
+// run so far ({ score, chain }) or null.
+export function showFrontDoor({ dateKey, best }) {
+  if (!doorChipsEl.childElementCount) {
+    // The five colours with their glyphs, as on the cubes
+    for (let i = 0; i < COLOR_NAMES.length; i++) {
+      const chip = document.createElement('div');
+      chip.className = 'q-slot';
+      doorChipsEl.appendChild(chip);
+      paintSlot(chip, i);
+    }
+  }
+  doorDateEl.textContent = longDate(dateKey);
+  doorDailySubEl.textContent = best
+    ? `Your best ${formatScore(best.score)}` + (best.chain >= 2 ? ` · ×${best.chain} chain` : '')
+    : 'Unlimited tries · your best counts';
+  doorShareBtn.hidden = !best;
+  resetShareLabels();
+  frontDoor.style.display = 'flex';
+}
+
+export function hideFrontDoor() {
+  frontDoor.style.display = 'none';
+}
+
+// After a share: where there is no share sheet the line went to the
+// clipboard, and the button says so for a moment
+const SHARE_LABEL = "Share today's best";
+let shareLabelTimer = null;
+
+export function showShared(how) {
+  if (how !== 'clipboard') return;
+  for (const btn of [shareBtn, doorShareBtn]) btn.textContent = 'Copied';
+  clearTimeout(shareLabelTimer);
+  shareLabelTimer = setTimeout(resetShareLabels, 1500);
+}
+
+function resetShareLabels() {
+  clearTimeout(shareLabelTimer);
+  shareLabelTimer = null;
+  for (const btn of [shareBtn, doorShareBtn]) btn.textContent = SHARE_LABEL;
 }
 
 export function showPause(on) {
@@ -347,6 +399,7 @@ export function hideOverlays() {
   pauseScreen.style.display = 'none';
   continueScreen.style.display = 'none';
   gameOverScreen.style.display = 'none';
+  frontDoor.style.display = 'none';
 }
 
 // ─── First-run hint ─────────────────────────────────────────────────────────

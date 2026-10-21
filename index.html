@@ -171,7 +171,7 @@
 
       /* ─── Pause and game over ─────────────────────────────────────
          A paper veil over the board, ink type, one solid button. */
-      #pause-screen, #continue-screen, #game-over-screen {
+      #pause-screen, #continue-screen, #game-over-screen, #front-door {
         display: none;
         position: absolute;
         top: 0; left: 0; width: 100%; height: 100%;
@@ -185,14 +185,15 @@
         padding: 0 calc(24px + env(safe-area-inset-right)) 0 calc(24px + env(safe-area-inset-left));
       }
       #pause-screen, #continue-screen { z-index: 50; gap: 12px; }
+      [hidden] { display: none !important; }
       #continue-screen .continue-sub { font-size: 15px; color: var(--muted); margin: -6px 0 8px; }
-      #pause-screen h1, #continue-screen h1, #game-over-screen h1 {
+      #pause-screen h1, #continue-screen h1, #game-over-screen h1, #front-door h1 {
         font-size: 40px;
         font-weight: 700;
         letter-spacing: 0.02em;
         margin-bottom: 12px;
       }
-      #pause-screen button, #continue-screen button, #game-over-screen button {
+      #pause-screen button, #continue-screen button, #game-over-screen button, #front-door button {
         font-family: inherit;
         font-size: 18px;
         font-weight: 600;
@@ -204,7 +205,7 @@
         cursor: pointer;
         min-width: 180px;
       }
-      #pause-screen .btn-restart, #continue-screen .btn-restart {
+      #pause-screen .btn-restart, #continue-screen .btn-restart, #game-over-screen .btn-restart, #front-door .btn-restart {
         background: transparent;
         color: var(--ink);
         border: 1.5px solid var(--chip);
@@ -220,10 +221,37 @@
         color: var(--coral);
         margin-bottom: 14px;
       }
-      #run-stats { font-size: 15px; line-height: 1.4; color: var(--muted); margin-bottom: 6px; max-width: 34em; }
+      #game-over-screen #run-stats { font-size: 15px; line-height: 1.4; color: var(--muted); margin-bottom: 6px; max-width: 34em; }
       .recap-item { white-space: nowrap; }
-      #daily-result { display: none; font-size: 15px; color: var(--ink); margin-bottom: 8px; }
-      .retry-hint { font-size: 13px; color: var(--muted); margin-top: 14px; }
+      #game-over-screen .btn-link, #pause-screen .btn-link {
+        background: transparent;
+        color: var(--muted);
+        min-width: 0;
+        padding: 8px 16px;
+        font-size: 15px;
+      }
+      #game-over-screen .retry-hint { font-size: 13px; color: var(--muted); margin-top: 14px; }
+
+      /* ─── Front door ──────────────────────────────────────────────
+         Where the app opens: today's board first, Endless second. The
+         Daily's board waits behind the veil. */
+      #front-door { z-index: 60; gap: 12px; }
+      #front-door h1 { margin-bottom: 0; }
+      #door-chips { display: flex; gap: 6px; margin-bottom: 4px; }
+      #door-chips .q-slot { width: 22px; height: 22px; border-radius: 6px; }
+      .door-date { font-size: 15px; color: var(--muted); font-variant-numeric: tabular-nums; margin-bottom: 20px; }
+      #front-door .door-main {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 4px;
+        min-width: 260px;
+        padding: 16px 32px;
+        font-size: 22px;
+        font-weight: 700;
+      }
+      .door-sub { font-size: 14px; font-weight: 500; opacity: 0.75; font-variant-numeric: tabular-nums; }
+      .door-note { font-size: 13px; color: var(--muted); margin-top: 16px; max-width: 26em; }
 
       /* ─── Score popups ────────────────────────────────────────────
          Ink on paper, coral for a chain. No glow. */
@@ -379,6 +407,7 @@
         <button id="resume-btn">Resume</button>
         <button id="pause-restart-btn" class="btn-restart">Restart</button>
         <button id="mute-btn" class="btn-restart" aria-pressed="false">Sound: on</button>
+        <button id="pause-home-btn" class="btn-link">Home</button>
       </div>
       <div id="continue-screen">
         <h1>WELCOME BACK</h1>
@@ -389,12 +418,25 @@
       <div id="game-over-screen">
         <h1>GAME OVER</h1>
         <p>Score: <strong id="final-score">0</strong></p>
-        <p class="best-line">Best: <strong id="final-best">0</strong></p>
+        <p class="best-line"><span id="final-best-label">Best</span>: <strong id="final-best">0</strong></p>
         <div id="new-best">NEW BEST!</div>
         <p id="run-stats"></p>
-        <p id="daily-result"></p>
-        <button id="restart-btn">Play Again</button>
+        <button id="restart-btn">Play again</button>
+        <button id="share-btn" class="btn-restart" hidden>Share today's best</button>
+        <button id="home-btn" class="btn-link">Home</button>
         <p class="retry-hint">Tap the board to try again</p>
+      </div>
+      <div id="front-door">
+        <div id="door-chips" aria-hidden="true"></div>
+        <h1>Hueshot</h1>
+        <p class="door-date" id="door-date"></p>
+        <button id="door-daily" class="door-main">
+          Today's board
+          <span class="door-sub" id="door-daily-sub">Unlimited tries · your best counts</span>
+        </button>
+        <button id="door-share" class="btn-restart" hidden>Share today's best</button>
+        <button id="door-endless" class="btn-restart">Endless</button>
+        <p class="door-note">One board a day, the same for everyone.</p>
       </div>
     </div>
     <script type="module" src="/src/main.js"></script>

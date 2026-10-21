@@ -1,6 +1,6 @@
 // ─── Persistence ─────────────────────────────────────────────────────────────
 // Everything that outlives a run: the best score, lifetime stats, the best
-// score per daily, whether the first-run hint has been seen, the mute
+// run of each day's Daily, whether the first-run hint has been seen, the mute
 // setting, and a run in progress (so a run survives the app being killed).
 //
 // Storage sits behind a small backend interface, so the iOS shell can keep
@@ -19,6 +19,7 @@
 // read after that is synchronous.
 
 import { isNative } from './platform/native.js';
+import { betterDailyRun } from './game/daily.js';
 
 const PREFIX = 'hueshot-';
 const BEST_KEY = PREFIX + 'best';
@@ -110,12 +111,31 @@ export function saveLifeStats(stats) {
   write(STATS_KEY, JSON.stringify(stats));
 }
 
-// Records a daily score; returns the best for that day including this one
-export function recordDailyScore(dateKey, score) {
-  const key = DAILY_PREFIX + dateKey;
-  const prev = parseInt(read(key) || '0', 10);
-  if (score > prev) write(key, String(score));
-  return Math.max(prev, score);
+// The day's best Daily run, { score, chain, sketch } (see game/daily.js), or
+// null if that day has not been played. A day saved before the record grew
+// a chain and a sketch is just its score.
+export function loadDailyBest(dateKey) {
+  const raw = read(DAILY_PREFIX + dateKey);
+  if (raw === null) return null;
+  try {
+    const best = JSON.parse(raw);
+    if (typeof best === 'number') return { score: best, chain: 0, sketch: null };
+    if (best && typeof best.score === 'number') return best;
+  } catch {
+    // Unreadable: as if not played
+  }
+  return null;
+}
+
+// Records a finished Daily run; it becomes the day's best if betterDailyRun
+// says so. Returns { best, prev }: the day's best now, and before this run.
+export function recordDailyRun(dateKey, run) {
+  const prev = loadDailyBest(dateKey);
+  if (betterDailyRun(prev, run)) {
+    write(DAILY_PREFIX + dateKey, JSON.stringify(run));
+    return { best: run, prev };
+  }
+  return { best: prev, prev };
 }
 
 export function hintSeen() {

@@ -22,6 +22,11 @@ const step = (page, n, events = []) => page.evaluate(([count, evs]) => window.__
 // Dispatch a keydown just before the next frame runs
 const press = (page, key) => page.evaluate((k) => window.__replay.run(1, [{ f: window.__replay.frame, key: k }]), key);
 
+// Click an element just before the next frame runs
+const click = (page, selector) => page.evaluate((sel) => window.__replay.run(1, [{ f: window.__replay.frame, click: sel }]), selector);
+
+const shown = (page, id) => page.evaluate((el) => getComputedStyle(document.getElementById(el)).display !== 'none', id);
+
 // Step until nothing is in flight; returns the frames it took
 async function settle(page, max = 600) {
   const n = await page.evaluate((limit) => {
@@ -71,7 +76,7 @@ async function idleUntilGameOver(page, maxFrames) {
 // `alone` must land with no neighbour of its own colour, so that it cannot
 // take part in a match or in how a wall row fits the board.
 async function playDaily(page, shots, until) {
-  await page.evaluate(() => window.__replay.run(1, [{ f: window.__replay.frame, click: '#daily-btn' }]));
+  await click(page, '#daily-btn');
   return page.evaluate(([list, end]) => {
     const h = window.__hs;
     const rp = window.__replay;
@@ -260,7 +265,7 @@ const CHECKS = [
     // (serialize() equal field for field), and Continue must play it on.
     name: 'continue-after-reload',
     async run(page) {
-      await page.evaluate(() => window.__replay.run(1, [{ f: window.__replay.frame, click: '#daily-btn' }]));
+      await click(page, '#daily-btn');
       const saves = [];
       for (let turn = 0; saves.length < 2 && turn < 60; turn++) {
         if (turn < 5) {
@@ -382,6 +387,125 @@ const CHECKS = [
       return `hidden 2 s: suspended, paused, 0 notes; shown: ${after.length} notes in 300 ms, none late`;
     },
   },
+  {
+    // W3-B: the app opens on the front door, today's board is a tap away
+    // with unlimited tries, the day's best is kept and shared, and Home
+    // goes back to the door. The all-time best is set high so a better try
+    // reads as today's best, not the all-time one.
+    name: 'front-door',
+    door: false,
+    async run(page) {
+      await page.evaluate(() => localStorage.setItem('hueshot-best', '99999'));
+      await page.reload();
+      await page.waitForFunction(() => window.__hs && window.__replay, null, { timeout: 15_000 });
+      await step(page, 2);
+      // Whatever share there is, the text lands here
+      await page.evaluate(() => {
+        window.__shared = [];
+        navigator.share = async ({ text }) => { window.__shared.push(text); };
+      });
+
+      check(await shown(page, 'front-door'), 'the app did not open on the front door');
+      check(!(await shown(page, 'continue-screen')), 'a fresh launch offered Continue');
+      check(await page.evaluate(() => window.__hs.paused && window.__hs.daily), "today's board is not waiting behind the door");
+      check(await page.evaluate(() => document.getElementById('door-share').hidden), 'Share offered before the Daily was played');
+      // Nothing behind the door may be played, and the door cannot be paused away
+      await press(page, 'Space');
+      await press(page, 'Escape');
+      await step(page, 30);
+      check(await page.evaluate(() => !window.__hs.busy && !window.__hs.wall.started), 'a shot was fired through the front door');
+      check(await shown(page, 'front-door') && !(await shown(page, 'pause-screen')), 'Escape took the front door down');
+
+      // A losing board: a full lane 3, and the cube in hand fired into it.
+      // `clear` first stages a triple in lane 0 to score with.
+      const lose = async (clear) => {
+        await page.evaluate((withClear) => {
+          const h = window.__hs;
+          h.clearBoard();
+          if (withClear) {
+            h.placeCube(0, 11, 4);
+            h.placeCube(0, 10, 4);
+            h.setCur({ col: 0, color: 4 });
+          }
+        }, clear);
+        if (clear) {
+          await press(page, 'Space');
+          await settle(page);
+        }
+        await page.evaluate(() => {
+          const h = window.__hs;
+          for (let r = 1; r < 12; r++) h.placeCube(3, r, r % 2 ? 1 : 2);
+          h.setCur({ col: 3, color: 0 });
+        });
+        await press(page, 'Space');
+        for (let i = 0; i < 120 && !(await hs(page)).gameOver; i++) await step(page, 5);
+        check((await hs(page)).gameOver, 'the staged board did not end the run');
+      };
+      const dailyRecord = () => page.evaluate(() => JSON.parse(localStorage.getItem('hueshot-daily-2026-10-20')));
+      const text = (id) => page.evaluate((el) => document.getElementById(el).textContent, id);
+
+      // Try 1 on today's board: 0 points
+      await click(page, '#door-daily');
+      check(!(await shown(page, 'front-door')) && !(await page.evaluate(() => window.__hs.paused)), "Today's board did not start");
+      await lose(false);
+      let rec = await dailyRecord();
+      check(rec && rec.score === 0 && rec.sketch.length === 3, `try 1 recorded ${JSON.stringify(rec)}`);
+      check(await text('final-best-label') === "Today's best", 'the game over does not show the day\'s best');
+      check(!(await page.evaluate(() => document.getElementById('share-btn').hidden)), 'no Share after a Daily');
+
+      // Try again: the same board again, and a better score replaces the best
+      await click(page, '#restart-btn');
+      check(await page.evaluate(() => window.__hs.daily && !window.__hs.gameOver), 'Try again left the Daily');
+      await lose(true);
+      rec = await dailyRecord();
+      check(rec.score === 30, `try 2 scored 30 but the day's best is ${rec.score}`);
+      check(await text('new-best') === 'NEW BEST TODAY', `a better try reads "${await text('new-best')}"`);
+      // The front row of the sketch is the lane 3 cube that ended the run;
+      // lane 3 is the middle of the seven on screen
+      check(same(rec.sketch[2], [null, null, null, 0, null, null, null]), `sketch front row ${JSON.stringify(rec.sketch[2])}`);
+
+      // Share: one line and the sketch
+      await click(page, '#share-btn');
+      await page.waitForFunction(() => window.__shared.length === 1, null, { timeout: 5_000 });
+      const shared = await page.evaluate(() => window.__shared[0]);
+      const lines = shared.split('\n');
+      check(lines[0] === 'Hueshot · Oct 20 · 30', `share line "${lines[0]}"`);
+      check(lines.length === 4 && lines.slice(1).every((l) => [...l].length === 7), `share sketch ${JSON.stringify(lines.slice(1))}`);
+      check(lines[3] === '⬜⬜⬜🟥⬜⬜⬜', `share front row ${lines[3]}`);
+
+      // A worse try keeps the best
+      await click(page, '#restart-btn');
+      await lose(false);
+      check((await dailyRecord()).score === 30, 'a worse try replaced the day\'s best');
+      check(await text('final-best') === '30', `the game over shows today's best as ${await text('final-best')}`);
+
+      // Home: the door again, now with the day's best and Share
+      await click(page, '#home-btn');
+      check(await shown(page, 'front-door'), 'Home did not open the front door');
+      check(/Your best 30/.test(await text('door-daily-sub')), `the door reads "${await text('door-daily-sub')}"`);
+      check(!(await page.evaluate(() => document.getElementById('door-share').hidden)), 'no Share on the door after a Daily');
+
+      // Endless from the door: no Share at its game over
+      await click(page, '#door-endless');
+      check(await page.evaluate(() => !window.__hs.daily && !window.__hs.paused), 'Endless did not start');
+      await lose(false);
+      check(await page.evaluate(() => document.getElementById('share-btn').hidden), 'Share offered after Endless');
+      check(await text('final-best-label') === 'Best', 'Endless shows a day\'s best');
+
+      // Pause, Home: the run is dropped, and a reload opens on the door
+      await click(page, '#restart-btn');
+      await press(page, 'Space');
+      await settle(page);
+      await press(page, 'Escape');
+      await click(page, '#pause-home-btn');
+      check(await shown(page, 'front-door') && !(await shown(page, 'pause-screen')), 'Home from pause did not open the door');
+      await page.reload();
+      await page.waitForFunction(() => window.__hs && window.__replay, null, { timeout: 15_000 });
+      await step(page, 2);
+      check(await shown(page, 'front-door') && !(await shown(page, 'continue-screen')), 'a run left for Home came back after a reload');
+      return 'door -> 3 Daily tries (best 30 kept, shared with its sketch) -> Home -> Endless -> pause -> Home -> reload -> door';
+    },
+  },
 ];
 
 // ─── Runner ──────────────────────────────────────────────────────────────────
@@ -402,6 +526,8 @@ async function main() {
       const { page } = await openGame(browser, harness.baseUrl, errors);
       try {
         await step(page, 2);
+        // The app opens on the front door; most checks play Endless from it
+        if (c.door !== false) await click(page, '#door-endless');
         const note = await c.run(page, browser, harness.baseUrl, errors);
         if (errors.length > errorsBefore) throw new Error(errors[errorsBefore]);
         console.log(`ok   ${c.name}  ${((Date.now() - t0) / 1000).toFixed(1)}s${note ? `  (${note})` : ''}`);

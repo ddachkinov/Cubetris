@@ -166,6 +166,24 @@ function check(cond, msg) {
 // ─── Scenes ──────────────────────────────────────────────────────────────────
 const SCENES = [
   {
+    name: '00-front-door',
+    // Where the app opens: today's board, Endless, and the day's best once
+    // there is one. Staged with a best already on the day.
+    door: false,
+    async setup(context) {
+      await context.addInitScript(() => {
+        const d = new Date();
+        const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+        localStorage.setItem(`hueshot-daily-${key}`, JSON.stringify({ score: 4820, chain: 5, sketch: [] }));
+      });
+    },
+    async run(page) {
+      check(await page.evaluate(() => window.__hs.frontDoor), 'the app did not open on the front door');
+      const sub = await page.textContent('#door-daily-sub');
+      check(sub.includes('4,820') && sub.includes('×5'), `the door reads "${sub}"`);
+    },
+  },
+  {
     name: '01-opening',
     // What a new player sees sitting idle: the seeded pair and the hint
     hintSeen: false,
@@ -347,6 +365,7 @@ async function runScene(browser, baseUrl, scene, errors) {
   if (scene.hintSeen !== false) {
     await context.addInitScript(() => localStorage.setItem('hueshot-hint-seen', '1'));
   }
+  if (scene.setup) await scene.setup(context);
   const page = await context.newPage();
   page.on('pageerror', (err) => errors.push(`[${scene.name}] pageerror: ${err.message}`));
   page.on('console', (msg) => {
@@ -356,6 +375,11 @@ async function runScene(browser, baseUrl, scene, errors) {
     await page.goto(`${baseUrl}?debug=1`);
     await page.waitForFunction(() => window.__hs, null, { timeout: 15_000 });
     await frames(page, 10);
+    // The app opens on the front door; the scenes play Endless from it
+    if (scene.door !== false) {
+      await page.click('#door-endless');
+      await frames(page, 2);
+    }
     const note = await scene.run(page);
     const file = path.join(OUT, `${scene.name}.png`);
     await page.screenshot({ path: file });

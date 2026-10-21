@@ -63,8 +63,9 @@ function laneFromPointer(clientX, clientY) {
   return Math.max(0, Math.min(GRID_COLS - 1, Math.round(aimPoint.x / COL_CELL)));
 }
 
-// actions: { shoot, holdSwap, togglePause, restartGame(asDaily), toggleSound }
-export function initInput({ shoot, holdSwap, togglePause, restartGame, toggleSound }) {
+// actions: { shoot, holdSwap, togglePause, restartGame(asDaily), toggleSound,
+//            openFrontDoor, shareDaily }
+export function initInput({ shoot, holdSwap, togglePause, restartGame, toggleSound, openFrontDoor, shareDaily }) {
   window.addEventListener('keydown', (e) => {
     if (e.code === 'Escape') {
       if (!state.gameOver) togglePause();
@@ -148,9 +149,10 @@ export function initInput({ shoot, holdSwap, togglePause, restartGame, toggleSou
   // ─── Buttons ───────────────────────────────────────────────────────────────
   document.getElementById('pause-btn').addEventListener('click', togglePause);
   document.getElementById('resume-btn').addEventListener('click', togglePause);
-  // restartGame() unpauses and hides the pause screen itself
-  document.getElementById('pause-restart-btn').addEventListener('click', () => restartGame());
-  document.getElementById('restart-btn').addEventListener('click', () => restartGame(false));
+  // restartGame() unpauses and hides the pause screen itself. A restart is
+  // another go at the same mode: a Daily retries today's board.
+  document.getElementById('pause-restart-btn').addEventListener('click', () => restartGame(state.dailyMode));
+  document.getElementById('restart-btn').addEventListener('click', () => restartGame(state.dailyMode));
   document.getElementById('hold-preview').addEventListener('click', () => holdSwap());
   document.getElementById('mute-btn').addEventListener('click', () => toggleSound());
 
@@ -159,4 +161,12 @@ export function initInput({ shoot, holdSwap, togglePause, restartGame, toggleSou
     if (state.paused) togglePause();
     restartGame(true);
   });
+
+  // The front door, and the way back to it; leaving a run there drops it
+  document.getElementById('door-daily').addEventListener('click', () => restartGame(true));
+  document.getElementById('door-endless').addEventListener('click', () => restartGame(false));
+  document.getElementById('home-btn').addEventListener('click', () => openFrontDoor());
+  document.getElementById('pause-home-btn').addEventListener('click', () => openFrontDoor());
+  document.getElementById('share-btn').addEventListener('click', () => shareDaily());
+  document.getElementById('door-share').addEventListener('click', () => shareDaily());
 }

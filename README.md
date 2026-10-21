@@ -17,15 +17,15 @@ nvm use          # Node 22, from .nvmrc
 npm install
 npm run dev      # http://localhost:5173
 npm run build    # -> dist/
-npm run shots    # 9 scene screenshots -> shots/, non-zero exit on any page error
+npm run shots    # 10 scene screenshots -> shots/, non-zero exit on any page error
 npm run replay   # replay a recorded 60 s daily run, fail unless it ends identically
 npm run checks   # scripted gameplay checks on a virtual clock, e.g. an idle board stays put
 npm run perf     # frame work during a staged 11-cube chain, 4x CPU throttle; fails over 12 ms p95
-npm test         # Vitest on src/game/rules.js and the music scheduler
+npm test         # Vitest on the rules, the Daily's share line and the music scheduler
 ```
 
 `npm run shots` (`scripts/shoot.mjs`) boots Vite, drives the game in headless Chromium
-and screenshots nine scenes: opening, aiming, a greedy bot's game, a staged ×2 chain,
+and screenshots ten scenes: the front door, opening, aiming, a greedy bot's game, a staged ×2 chain,
 level-up, danger, game over, desktop, and banners taking turns after a restart. Pass part of a scene name to run only that
 one (`npm run shots -- chain`). It reaches the game through `window.__hs`, a debug hook
 that exists only when the page is loaded with `?debug=1`. A scene whose page stops
@@ -64,7 +64,9 @@ breather on top of the next interval; and two runs of the same Daily that time
 their shots differently still get the same hand and the same wall rows; a run is saved
 at every wall advance (only while nothing is in flight) and a reload offers Continue and
 puts back exactly the run that was left; and hiding the page suspends the audio and
-pauses the run, and showing it again plays no burst of missed notes. Pass part of a check's name to run only
+pauses the run, and showing it again plays no burst of missed notes; and the app opens
+on the front door, Today's board takes unlimited tries and keeps the best, the best is
+shared as a line and a sketch, and Home goes back to the door. Pass part of a check's name to run only
 that one. A cascade starting while another is still resolving logs a console error,
 which fails every harness.
 
@@ -72,6 +74,26 @@ The look is "ceramic on paper" from `docs/APPSTORE_PLAN.md`: matte rounded cubes
 warm paper board, in three tints that change with the level. Every colour carries a
 face glyph (dot, ring, cross, bar, diamond; a star on the rainbow, a fuse on the bomb),
 on the cubes and in the hold and next chips, so no colour has to be told apart by hue.
+
+## The Daily
+
+The app opens on the front door: **Today's board**, the same seeded board for everyone
+that day, or **Endless**. (A run left in progress is offered back first, under
+"Welcome back".) The Daily takes unlimited tries and the best one counts; the door and
+the game-over screen show the day's best, and Share sends it as one line and a sketch of
+the three rows the run ended on:
+
+```
+Hueshot · Oct 21 · 4,820 · ×5 chain
+⬜⬜🟦⬜⬜⬜⬜
+⬜🟥🟦⬜🟨⬜⬜
+🟩🟥🟪🟥🟨🟦⬛
+```
+
+to the share sheet in the iOS shell, Web Share in a browser that has it, or the
+clipboard. Home (on the pause and game-over screens) goes back to the door and drops
+the run. Game Center ranks are not in yet (Phase 6); without them the day's best is
+local.
 
 No assets, no backend, no account. All audio is synthesized with Web Audio at runtime
 and all visuals are Three.js primitives, so the whole game is the JavaScript bundle.
@@ -83,12 +105,13 @@ and all visuals are Three.js primitives, so the whole game is the JavaScript bun
 | `index.html` | Page shell, HUD markup, all CSS |
 | `src/main.js` | Game flow (shooting, cascades, the wall, levels, game over, restart) and the frame loop |
 | `src/game/rules.js` | Pure rules: landing, flood-fill matching, removal sets, gravity, wall rows, opening seeds, the bag, the seeded RNG and the difficulty curves |
-| `src/game/rules.test.js` | Vitest suite for `rules.js` (`npm test`) |
+| `src/game/rules.test.js`, `daily.test.js` | Vitest suites for `rules.js` and `daily.js` (`npm test`) |
+| `src/game/daily.js` | The Daily's result: the day's best, the board sketch, and the share line |
 | `src/game/state.js` | The one `state` object a run is made of, `serialize`/`deserialize` (version 2, both Daily streams) and `isBusy` |
 | `src/render/` | Three.js: `scene.js` (renderer, lights, static board), `camera.js` (fit to any aspect, shake), `cubes.js` (every cube drawn by one `InstancedMesh`; aim visuals, cube tweens), `particles.js` (debris and shot trail, one pooled `InstancedMesh` of 240), `palette.js` (the paper palette and its three tints, Dawn/Dusk/Slate), `glyphs.js` (the face glyph per colour, as a texture atlas and as SVG), `perf.js` (the `?debug=1` frame meter) |
 | `src/audio/sfx.js` | The `AudioContext`, the bus graph (master with mute, music bus ducked -3 dB on clears, sfx bus), suspend/resume on visibility, and every synthesized sound effect |
 | `src/audio/music.js` | `MusicEngine` — four synthesized stems driven by gameplay intensity, plus a beat grid used to quantize sound effects; `pause`/`resume`/`resync` keep it from bursting after a stall |
-| `src/ui/hud.js` | The DOM overlay: score line, previews, wall timer, banners, popups, flash, pause and game-over screens, first-run hint |
+| `src/ui/hud.js` | The DOM overlay: score line, previews, wall timer, banners, popups, flash, the front door, pause and game-over screens, first-run hint |
 | `src/platform/` | The native seam: haptics, storage backend, lifecycle and share, each with a browser fallback |
 | `src/input.js` | Keyboard, pointer aiming and the HUD buttons |
 | `src/persistence.js` | Everything that outlives a run, behind a small storage-backend interface (localStorage on the web), read into memory once at boot |
@@ -103,7 +126,8 @@ and all visuals are Three.js primitives, so the whole game is the JavaScript bun
 | `docs/APPSTORE_PLAN.md` | Recon, IP audit, design spec and the phased plan to ship on iOS |
 | `docs/DESIGN_AUDIT_2026-02.md` | Earlier design audit, kept for history |
 
-Progress is stored in `localStorage` (`hueshot-best`, `-stats`, `-daily-<date>`,
+Progress is stored in `localStorage` (`hueshot-best`, `-stats`, `-daily-<date>` (the
+day's best run),
 `-hint-seen`, `-muted`, and `-run`, the run in progress; see `src/persistence.js`).
 Clear those keys to reset.
 

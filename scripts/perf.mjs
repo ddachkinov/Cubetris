@@ -68,6 +68,8 @@ async function main() {
     page.on('pageerror', (err) => errors.push(err.message));
     await page.goto(`${harness.baseUrl}?debug=1`);
     await page.waitForFunction(() => window.__hs, null, { timeout: 15_000 });
+    // Past the front door, into Endless
+    await page.click('#door-endless');
     await page.waitForTimeout(1_500);
     const cdp = await context.newCDPSession(page);
     await cdp.send('Emulation.setCPUThrottlingRate', { rate: THROTTLE });
